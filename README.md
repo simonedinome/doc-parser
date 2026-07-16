@@ -7,6 +7,7 @@ strutturata (procedure, glossario, chunk RAG) tramite LLM multi-provider.
 
 - Python 3.11+
 - [ffmpeg](https://ffmpeg.org/) installato e disponibile in `PATH` (estrazione screenshot dai video)
+- [LibreOffice](https://www.libreoffice.org/) (`soffice` in `PATH`) per l'estrazione testo dai file `.doc` legacy
 
 ## Setup
 

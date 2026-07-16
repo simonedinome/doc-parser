@@ -130,8 +130,9 @@ def test_worker_thread_processes_queued_run_end_to_end(repo, settings) -> None:
         worker.stop()
 
 
-def test_default_process_fn_delegates_to_pipeline_stub(repo, settings) -> None:
-    _submit(repo)
+def test_default_process_fn_delegates_to_real_pipeline(repo, settings) -> None:
+    """process_fn di default invoca doc_parser.pipeline.core.process_run (non uno stub)."""
+    _submit(repo)  # run senza input_path: la pipeline reale la rifiuta come guardrail
     run = _claim_and_process(Worker(repo=repo, settings=settings), repo)
-    assert run.status == RunStatus.FAILED
-    assert "non ancora implementata" in (run.error_message or "")
+    assert run.status == RunStatus.REJECTED
+    assert "mancante" in (run.error_message or "")

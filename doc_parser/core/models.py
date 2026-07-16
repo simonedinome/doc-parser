@@ -74,6 +74,7 @@ class RunRecord(BaseModel):
     input_size_bytes: int | None = None
     input_pages: int | None = None
     input_path: str | None = None
+    input_manifest_ref: str | None = None
     output_path: str | None = None
     output_size_bytes: int | None = None
 

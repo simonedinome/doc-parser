@@ -20,6 +20,7 @@ _CONTENT_TYPE_EXACT = {
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/msword",
     "text/csv",
     "text/plain",
     "application/octet-stream",

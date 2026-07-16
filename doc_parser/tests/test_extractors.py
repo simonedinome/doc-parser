@@ -1,9 +1,15 @@
 import io
+import subprocess
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 from docx import Document
 from openpyxl import Workbook
 
+from doc_parser.core.errors import GuardrailRejection
 from doc_parser.ingestion.extract import extract_text
+from doc_parser.ingestion.extractors.doc_legacy_extractor import extract_doc
 from doc_parser.ingestion.extractors.docx_extractor import extract_docx
 from doc_parser.ingestion.extractors.text_extractor import extract_csv, extract_txt
 from doc_parser.ingestion.extractors.xlsx_extractor import extract_xlsx
@@ -73,3 +79,51 @@ def test_extract_text_dispatch() -> None:
     assert "a | b" in extract_text("csv", b"a,b\n")
     assert "## Foglio1" in extract_text("xlsx", _sample_xlsx_bytes())
     assert "Titolo del documento" in extract_text("docx", _sample_docx_bytes())
+
+
+# La conversione soffice --headless è mockata (non eseguita realmente): il
+# sandbox di test non garantisce un ambiente grafico/headless funzionante per
+# LibreOffice, e la funzione va comunque verificata a contratto (comando
+# invocato, file letto dall'outdir, errori gestiti).
+
+
+def _fake_soffice_run(cmd, **kwargs):
+    outdir = Path(cmd[cmd.index("--outdir") + 1])
+    (outdir / "input.txt").write_text("Titolo del documento\nUn paragrafo di prova.", encoding="utf-8")
+    return subprocess.CompletedProcess(cmd, 0)
+
+
+def test_extract_doc_converts_via_soffice_and_reads_output() -> None:
+    with patch(
+        "doc_parser.ingestion.extractors.doc_legacy_extractor.subprocess.run",
+        side_effect=_fake_soffice_run,
+    ):
+        text = extract_doc(b"contenuto .doc fittizio")
+    assert "Titolo del documento" in text
+    assert "Un paragrafo di prova." in text
+
+
+def test_extract_doc_missing_soffice_raises_clear_error() -> None:
+    with patch(
+        "doc_parser.ingestion.extractors.doc_legacy_extractor.subprocess.run",
+        side_effect=FileNotFoundError(),
+    ):
+        with pytest.raises(GuardrailRejection, match="LibreOffice"):
+            extract_doc(b"contenuto qualsiasi")
+
+
+def test_extract_doc_conversion_failure_raises_guardrail() -> None:
+    with patch(
+        "doc_parser.ingestion.extractors.doc_legacy_extractor.subprocess.run",
+        side_effect=subprocess.CalledProcessError(1, "soffice"),
+    ):
+        with pytest.raises(GuardrailRejection, match="Conversione"):
+            extract_doc(b"contenuto qualsiasi")
+
+
+def test_extract_doc_dispatch_via_extract_text() -> None:
+    with patch(
+        "doc_parser.ingestion.extractors.doc_legacy_extractor.subprocess.run",
+        side_effect=_fake_soffice_run,
+    ):
+        assert "Titolo del documento" in extract_text("doc", b"contenuto .doc fittizio")

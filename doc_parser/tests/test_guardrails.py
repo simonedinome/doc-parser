@@ -46,6 +46,7 @@ trailer << /Root 1 0 R >>
         ("doc.pdf", "pdf"),
         ("cartella.xlsx", "xlsx"),
         ("relazione.docx", "docx"),
+        ("vecchio.doc", "doc"),
         ("dati.csv", "csv"),
         ("note.txt", "txt"),
     ],

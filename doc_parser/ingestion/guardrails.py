@@ -9,7 +9,7 @@ from doc_parser.core.errors import GuardrailRejection
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".txt"}
+DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".doc", ".xlsx", ".csv", ".txt"}
 SUPPORTED_EXTENSIONS = VIDEO_EXTENSIONS | IMAGE_EXTENSIONS | DOCUMENT_EXTENSIONS
 
 _KIND_BY_EXTENSION = {
@@ -17,6 +17,7 @@ _KIND_BY_EXTENSION = {
     **{ext: "image" for ext in IMAGE_EXTENSIONS},
     ".pdf": "pdf",
     ".docx": "docx",
+    ".doc": "doc",
     ".xlsx": "xlsx",
     ".csv": "csv",
     ".txt": "txt",
@@ -24,7 +25,7 @@ _KIND_BY_EXTENSION = {
 
 
 def classify_extension(filename: str) -> str:
-    """Ritorna il tipo di contenuto (video|image|pdf|docx|xlsx|csv|txt) dall'estensione.
+    """Ritorna il tipo di contenuto (video|image|pdf|docx|doc|xlsx|csv|txt) dall'estensione.
 
     Solleva GuardrailRejection se l'estensione non è supportata.
     """
