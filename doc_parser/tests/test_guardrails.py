@@ -5,6 +5,7 @@ from doc_parser.ingestion.guardrails import (
     check_size,
     classify_extension,
     inspect_pdf,
+    resolve_input_type,
     sha256_hash,
 )
 
@@ -96,3 +97,30 @@ def test_inspect_pdf_too_many_pages_raises() -> None:
 def test_sha256_hash_is_deterministic() -> None:
     assert sha256_hash(b"stesso contenuto") == sha256_hash(b"stesso contenuto")
     assert sha256_hash(b"a") != sha256_hash(b"b")
+
+
+def test_resolve_input_type_video_requires_all_video_files() -> None:
+    assert resolve_input_type(True, ["a.mp4", "b.mov"]) == "video"
+
+
+def test_resolve_input_type_video_rejects_non_video_file() -> None:
+    with pytest.raises(GuardrailRejection, match="non è un video"):
+        resolve_input_type(True, ["a.mp4", "b.pdf"])
+
+
+def test_resolve_input_type_doc_single_pdf() -> None:
+    assert resolve_input_type(False, ["manuale.pdf"]) == "pdf"
+
+
+def test_resolve_input_type_doc_multiple_images_become_image_type() -> None:
+    assert resolve_input_type(False, ["a.png", "b.jpg"]) == "image"
+
+
+def test_resolve_input_type_doc_multiple_non_image_files_rejected() -> None:
+    with pytest.raises(GuardrailRejection, match="singolo documento"):
+        resolve_input_type(False, ["a.pdf", "b.docx"])
+
+
+def test_resolve_input_type_doc_unsupported_extension_raises() -> None:
+    with pytest.raises(GuardrailRejection):
+        resolve_input_type(False, ["a.zip"])

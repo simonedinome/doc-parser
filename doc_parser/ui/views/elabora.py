@@ -137,8 +137,8 @@ def _submit(
         return
 
     try:
-        input_type = _resolve_input_type(content_type, is_video, [f[0] for f in files])
-    except ValueError as exc:
+        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files])
+    except Exception as exc:
         st.error(str(exc))
         return
 
@@ -183,24 +183,6 @@ def _submit(
     st.session_state["last_run_id"] = last_run_id
     if len(groups) > 1:
         st.success(f"{len(groups)} run create (merge disattivato).")
-
-
-def _resolve_input_type(content_type: str, is_video: bool, filenames: list[str]) -> str:
-    if is_video:
-        for fn in filenames:
-            kind = guardrails.classify_extension(fn)
-            if kind != "video":
-                raise ValueError(
-                    f"'{fn}' non è un video ({kind}): per il tipo di contenuto scelto carica solo video."
-                )
-        return "video"
-
-    kinds = [guardrails.classify_extension(fn) for fn in filenames]
-    if all(k == "image" for k in kinds):
-        return "image"
-    if len(filenames) == 1:
-        return kinds[0]
-    raise ValueError("Per i formati non video carica un singolo documento oppure più immagini.")
 
 
 @st.fragment(run_every="2s")

@@ -70,3 +70,28 @@ def inspect_pdf(pdf_bytes: bytes, max_pages: int) -> int:
 
 def sha256_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def resolve_input_type(is_video: bool, filenames: list[str]) -> str:
+    """Determina l'input_type di una run da is_video (dedotto dal content_type
+    scelto) e dai file forniti. Condivisa da UI e CLI per non duplicare la logica.
+
+    Solleva GuardrailRejection se i file non sono coerenti con la scelta
+    (es. un non-video per un content_type video, o più file non-immagine
+    per un content_type "doc").
+    """
+    if is_video:
+        for fn in filenames:
+            kind = classify_extension(fn)
+            if kind != "video":
+                raise GuardrailRejection(
+                    f"'{fn}' non è un video ({kind}): per il tipo di contenuto scelto carica solo video."
+                )
+        return "video"
+
+    kinds = [classify_extension(fn) for fn in filenames]
+    if all(k == "image" for k in kinds):
+        return "image"
+    if len(filenames) == 1:
+        return kinds[0]
+    raise GuardrailRejection("Per i formati non video carica un singolo documento oppure più immagini.")
