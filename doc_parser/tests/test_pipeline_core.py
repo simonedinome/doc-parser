@@ -1,4 +1,6 @@
+import io
 import json
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -61,7 +63,13 @@ def _screencast_response(steps: list[dict], title: str = "Titolo") -> str:
     )
 
 
-def _video_run(repo: SqliteRepository, model_id: str, content_type: str = "screencast", language: str = "it") -> RunRecord:
+def _video_run(
+    repo: SqliteRepository,
+    model_id: str,
+    content_type: str = "screencast",
+    language: str = "it",
+    html_mode: str = "standalone",
+) -> RunRecord:
     run = RunRecord(
         session_id="s1",
         requester_upn="utente@demo.local",
@@ -70,6 +78,7 @@ def _video_run(repo: SqliteRepository, model_id: str, content_type: str = "scree
         content_type=content_type,
         model_id=model_id,
         language=language,
+        html_mode=html_mode,
     )
     run.input_path = repo.save_input_file(run.run_id, "video.mp4", b"video-bytes-fittizi")
     return repo.create_run(run)
@@ -117,6 +126,45 @@ def test_video_two_step_rewrite(monkeypatch, repo, settings) -> None:
     assert updated.cost_eur > 0
     assert len(step1.calls) == 1
     assert len(step2.calls) == 1
+
+    assert updated.zip_ref and updated.output_dir_ref
+    assert updated.output_path == updated.zip_ref
+    assert updated.output_size_bytes and updated.output_size_bytes > 0
+    zip_bytes = repo.get_file(updated.zip_ref)
+    names = zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist()
+    assert {"procedura.txt", "glossario.txt", "rag_chunks.jsonl", "documentazione_standalone.html", "log.txt"} <= set(names)
+    artifacts_dir = Path(updated.output_dir_ref)
+    assert (artifacts_dir / "procedura.txt").exists()
+    assert "Titolo migliorato" in (artifacts_dir / "procedura.txt").read_text(encoding="utf-8")
+
+
+def test_video_folder_html_mode_includes_screenshots_and_english_labels(monkeypatch, repo, settings) -> None:
+    run = _video_run(repo, GEMINI_LITE_MODEL, language="en", html_mode="folder")
+    steps = [{"number": 1, "timestamp": "00:01", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
+    provider = ScriptedProvider([(_screencast_response(steps), 100, 10)])
+    _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
+
+    def _fake_ffmpeg_run(cmd, **kwargs):
+        import subprocess
+
+        if cmd[0] == "ffprobe":
+            return subprocess.CompletedProcess(cmd, 0, stdout="120.0", stderr="")
+        Path(cmd[-1]).write_bytes(b"PNG")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    with patch("doc_parser.pipeline.screenshots.subprocess.run", side_effect=_fake_ffmpeg_run):
+        process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    assert updated.status == RunStatus.DONE
+    zip_bytes = repo.get_file(updated.zip_ref)
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    names = zf.namelist()
+    assert "screenshots/proc_001_step_001.png" in names
+    assert "documentazione.html" in names
+    assert "documentazione_standalone.html" not in names
+    procedura = zf.read("procedura.txt").decode("utf-8")
+    assert "SUMMARY" in procedura and "PROCEDURE 1" in procedura
 
 
 def test_video_single_pass_gemini_skips_step2(monkeypatch, repo, settings) -> None:
@@ -221,6 +269,14 @@ def test_document_pdf_single_step(monkeypatch, repo, settings) -> None:
     assert len(provider.calls[0][2]) == 1  # un allegato PDF nativo
     assert provider.calls[0][2][0].mime_type == "application/pdf"
 
+    assert updated.zip_ref is not None
+    zip_bytes = repo.get_file(updated.zip_ref)
+    zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    # html_mode di default e' "standalone": l'immagine di pagina 1 e' embedded in base64,
+    # non in una cartella screenshots/ separata.
+    html = zf.read("documentazione_standalone.html").decode("utf-8")
+    assert "data:image/png;base64," in html
+
 
 def test_document_docx_uses_local_extraction_no_attachment(monkeypatch, repo, settings) -> None:
     import io
@@ -317,6 +373,10 @@ def test_elaborate_only_reuses_parent_raw_json(monkeypatch, repo, settings) -> N
     assert updated.screenshots_ref == "/tmp/screens/parent"
     final = json.loads(repo.get_file(updated.final_json_ref))
     assert final["title"] == "Titolo rifinito"
+    assert updated.zip_ref is not None
+    zip_bytes = repo.get_file(updated.zip_ref)
+    procedura = zipfile.ZipFile(io.BytesIO(zip_bytes)).read("procedura.txt").decode("utf-8")
+    assert "Titolo rifinito" in procedura
 
 
 def test_elaborate_only_missing_parent_raises_guardrail(repo, settings) -> None:

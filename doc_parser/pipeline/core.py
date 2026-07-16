@@ -5,9 +5,10 @@ Invocato dal worker in background e dalla CLI: guardrail, dedup, parsing
 artefatti (JSON grezzo/finale, screenshot) vivono qui, cosicché CLI e UI
 Streamlit condividano lo stesso motore.
 
-I builder che trasformano il JSON finale in procedura.txt/glossario.txt/
-html/zip sono in doc_parser.output (Fase 5): questo modulo si ferma alla
-persistenza del JSON finale e, per la modalità KB densa, del TXT assemblato.
+Gli artefatti finali (procedura.txt/glossario.txt/rag_chunks.jsonl/html/zip)
+sono costruiti da doc_parser.output a partire dal JSON finale, sempre in
+questo modulo: la modalità "documentazione" produce lo ZIP completo, la
+modalità "KB densa" il TXT a chunk assemblato da doc_parser.core.assembler.
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ from doc_parser.core.pricing import compute_cost, get_model, load_models_config
 from doc_parser.ingestion import guardrails
 from doc_parser.ingestion.extract import LOCAL_EXTRACTION_KINDS, extract_text
 from doc_parser.ingestion.mime import mime_type_for
+from doc_parser.output.assembly import build_output_zip
+from doc_parser.output.logger import Logger
 from doc_parser.pipeline import merger, parser, screenshots
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.profiles import resolve_profile_prompts
@@ -80,6 +83,62 @@ def _screenshots_output_dir(settings: Settings, run_id: str) -> Path:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     return output_dir
+
+
+def _reconstruct_screenshot_map(
+    screenshots_dir: Path | None, procedures: list[dict]
+) -> dict[tuple[str, int], Path | None]:
+    """Ricostruisce {(proc_id, step_number): path} dai file su disco.
+
+    Gli screenshot (video o pagine PDF) sono sempre nominati
+    ``{proc_id}_step_{numero:03d}.png``: non serve propagare la mappa
+    attraverso tutta la pipeline, basta rileggerla a fine elaborazione.
+    """
+    mapping: dict[tuple[str, int], Path | None] = {}
+    if screenshots_dir is None:
+        return mapping
+    for proc in procedures:
+        proc_id = proc.get("id")
+        for step in proc.get("steps", []):
+            num = step.get("number")
+            path = screenshots_dir / f"{proc_id}_step_{num:03d}.png"
+            mapping[(proc_id, num)] = path if path.exists() else None
+    return mapping
+
+
+def _build_and_persist_output(
+    run: RunRecord,
+    repo: Repository,
+    settings: Settings,
+    final_data: dict,
+    source_filename: str,
+    screenshots_dir: Path | None,
+) -> None:
+    """Costruisce gli artefatti "Documentazione operativa" dal JSON finale e
+    li persiste (cartella + zip). Non usato dalla modalità KB densa, che
+    produce già il proprio TXT direttamente in _process_kb_densa."""
+    screenshot_map = _reconstruct_screenshot_map(screenshots_dir, final_data.get("procedures", []))
+    log = Logger()
+    log.log("INFO", f"Run {run.run_id} completata")
+    files, zip_bytes = build_output_zip(
+        final_data, source_filename, run.language, run.html_mode, screenshot_map, screenshots_dir, log
+    )
+
+    artifacts_dir = settings.data_dir / "artifacts" / run.run_id
+    if artifacts_dir.exists():
+        shutil.rmtree(artifacts_dir)
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    for name, content in files.items():
+        (artifacts_dir / name).write_bytes(content)
+
+    zip_ref = repo.save_output_file(run.run_id, "run.zip", zip_bytes)
+    repo.update_run(
+        run.run_id,
+        output_dir_ref=str(artifacts_dir),
+        zip_ref=zip_ref,
+        output_path=zip_ref,
+        output_size_bytes=len(zip_bytes),
+    )
 
 
 # --- Percorso video (two-step) ---
@@ -195,6 +254,7 @@ def _process_video(
         cost_eur=round(total_cost, 6),
         **step2_fields,
     )
+    _build_and_persist_output(run, repo, settings, final_data, run.input_filename or "run", screenshots_dir)
     finalize_run(repo, run.run_id, RunStatus.DONE, run.started_at)
 
 
@@ -252,7 +312,7 @@ def _process_document(
 
     attachments: list[Attachment] = []
     extracted_text: str | None = None
-    pdf_path_for_screenshots: Path | None = None
+    screenshots_dir: Path | None = None
 
     if kind == "pdf":
         pages = guardrails.inspect_pdf(data, settings.max_pages)
@@ -286,7 +346,7 @@ def _process_document(
             )
         repo.update_run(run.run_id, screenshots_ref=str(screenshots_dir))
 
-    _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out)
+    _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out, filename, screenshots_dir)
 
 
 def _process_images(
@@ -311,7 +371,8 @@ def _process_images(
     raw_text, tokens_in, tokens_out = provider.generate(system_prompt, user_prompt, attachments)
     data_dict = parser.parse_response(raw_text, "doc")
 
-    _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out)
+    source_filename = run.input_filename or input_files[0][0]
+    _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out, source_filename, None)
 
 
 def _finalize_single_step(
@@ -322,6 +383,8 @@ def _finalize_single_step(
     data_dict: dict,
     tokens_in: int,
     tokens_out: int,
+    source_filename: str,
+    screenshots_dir: Path | None,
 ) -> None:
     final_json_bytes = json.dumps(data_dict, ensure_ascii=False, indent=2).encode("utf-8")
     final_json_ref = repo.save_output_file(run.run_id, "final.json", final_json_bytes)
@@ -340,6 +403,7 @@ def _finalize_single_step(
         unit_price_out=snapshot.unit_price_out if snapshot else None,
         cost_eur=snapshot.cost_eur if snapshot else None,
     )
+    _build_and_persist_output(run, repo, settings, data_dict, source_filename, screenshots_dir)
     finalize_run(repo, run.run_id, RunStatus.DONE, run.started_at)
 
 
@@ -432,5 +496,9 @@ def _process_elaborate_only(run: RunRecord, repo: Repository, settings: Settings
         tokens_total=tokens_in + tokens_out,
         cost_eur=snapshot.cost_eur if snapshot else 0.0,
         retry_count=retry_count,
+    )
+    screenshots_dir = Path(parent.screenshots_ref) if parent.screenshots_ref else None
+    _build_and_persist_output(
+        run, repo, settings, final_data, parent.input_filename or "run", screenshots_dir
     )
     finalize_run(repo, run.run_id, RunStatus.DONE, run.started_at)
