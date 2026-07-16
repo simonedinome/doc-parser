@@ -81,3 +81,27 @@ def test_admin_flag_set_for_admin_login(app_env) -> None:
     at = _login(at, "admin@demo.local", "admin123!")
     assert not at.exception
     assert at.session_state["auth_user"]["is_admin"] is True
+
+
+def test_elabora_page_renders_all_options(app_env) -> None:
+    at = AppTest.from_file(_APP_PATH, default_timeout=30).run()
+    at = _login(at, "utente@demo.local", "demo123!")
+    assert not at.exception
+    labels = [sb.label for sb in at.selectbox]
+    assert "Tipo di contenuto" in labels
+    assert "Modello" in labels
+    assert "Lingua output" in labels
+    assert "Modalità HTML" in labels
+    assert any(cb.label.startswith("Unisci") for cb in at.checkbox)
+
+
+def test_elabora_page_hides_video_only_options_for_doc_content_type(app_env) -> None:
+    at = AppTest.from_file(_APP_PATH, default_timeout=30).run()
+    at = _login(at, "utente@demo.local", "demo123!")
+    content_type_box = next(sb for sb in at.selectbox if sb.label == "Tipo di contenuto")
+    content_type_box.set_value("Documento (PDF, Word, Excel, CSV, testo, immagini)")
+    at = at.run()
+    assert not at.exception
+    labels = [sb.label for sb in at.selectbox]
+    assert "Modalità output" in labels
+    assert not any(cb.label.startswith("Unisci") for cb in at.checkbox)

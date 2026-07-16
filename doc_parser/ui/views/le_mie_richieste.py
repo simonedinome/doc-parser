@@ -1,12 +1,13 @@
-"""Pagina Le mie richieste: run dell'utente con auto-refresh sulle attive."""
+"""Pagina Le mie richieste: run dell'utente, download e Rielabora."""
 
 from __future__ import annotations
 
 import streamlit as st
 
-from doc_parser.core.models import RunStatus
+from doc_parser.core.models import RunRecord, RunStatus
+from doc_parser.core.pricing import load_models_config
 from doc_parser.ui.context import get_app_context
-from doc_parser.ui.format import friendly_row, has_active, output_name
+from doc_parser.ui.format import download_filename, friendly_row, has_active
 
 
 def render() -> None:
@@ -21,7 +22,7 @@ def render() -> None:
 
 @st.fragment(run_every="3s")
 def _table(upn: str) -> None:
-    _, repo, _, _ = get_app_context()
+    settings, repo, _, _ = get_app_context()
     runs = repo.list_runs(requester_upn=upn)
     if not runs:
         st.info("Nessuna richiesta: carica un documento dalla pagina «Elabora».")
@@ -42,9 +43,38 @@ def _table(upn: str) -> None:
         choice = st.selectbox("Scarica un output", list(options))
         run = options[choice]
         st.download_button(
-            "Scarica TXT",
+            "Scarica",
             data=repo.get_file(run.output_path),
-            file_name=output_name(run),
-            mime="text/plain",
+            file_name=download_filename(run),
             key=f"dl_{run.run_id}",
         )
+
+    reworkable = [r for r in runs if r.input_type == "video" and r.status == RunStatus.DONE and r.raw_json_ref]
+    if reworkable:
+        st.divider()
+        st.subheader("Rielabora")
+        st.caption("Rigenera solo lo step 2 (riscrittura) con un altro modello, riusando il JSON grezzo e gli screenshot già estratti.")
+        options = {f"{r.input_filename} — {r.run_id[:8]}": r for r in reworkable}
+        choice = st.selectbox("Run video da rielaborare", list(options), key="rework_choice")
+        source_run = options[choice]
+
+        models = load_models_config(settings.models_file).models
+        model_label = st.selectbox("Nuovo modello", [m.label for m in models], key="rework_model")
+        model_id = next(m.id for m in models if m.label == model_label)
+
+        if st.button("Avvia rielaborazione", key="rework_submit"):
+            child = RunRecord(
+                session_id=source_run.session_id,
+                requester_upn=source_run.requester_upn,
+                input_filename=source_run.input_filename,
+                input_type="video",
+                content_type=source_run.content_type,
+                output_mode=source_run.output_mode,
+                html_mode=source_run.html_mode,
+                language=source_run.language,
+                model_id=model_id,
+                parent_run_id=source_run.run_id,
+            )
+            repo.create_run(child)
+            st.success(f"Rielaborazione avviata: run {child.run_id[:8]}")
+            st.rerun()
