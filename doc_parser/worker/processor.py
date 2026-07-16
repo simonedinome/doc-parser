@@ -16,6 +16,7 @@ import traceback
 from datetime import datetime
 from typing import Callable
 
+from doc_parser.core.errors import GuardrailRejection
 from doc_parser.core.models import RunRecord, RunStatus, utcnow
 from doc_parser.settings import Settings
 from doc_parser.storage.base import Repository
@@ -24,9 +25,7 @@ logger = logging.getLogger(__name__)
 
 ProcessFn = Callable[[RunRecord, Repository, Settings], None]
 
-
-class GuardrailRejection(Exception):
-    """Input rifiutato prima della chiamata LLM (formato non valido, cifrato, oltre soglia)."""
+__all__ = ["GuardrailRejection", "Worker", "finalize_run"]
 
 
 def finalize_run(
