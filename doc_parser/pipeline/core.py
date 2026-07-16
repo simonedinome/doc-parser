@@ -57,12 +57,63 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
     total_size = sum(len(data) for _, data in input_files)
     guardrails.check_size(total_size, settings.max_upload_mb)
 
+    if len(input_files) == 1 and _reuse_if_duplicate(run, repo, input_files[0][1]):
+        return
+
     if run.input_type == "video":
         _process_video(run, repo, settings, input_files)
     elif run.input_type == "image":
         _process_images(run, repo, settings, input_files)
     else:
         _process_document(run, repo, settings, input_files)
+
+
+def _reuse_if_duplicate(run: RunRecord, repo: Repository, data: bytes) -> bool:
+    """Se un file identico è già stato elaborato con la stessa configurazione
+    (modello, lingua, output_mode, content_type, html_mode), riusa l'output
+    esistente senza una nuova chiamata LLM. Ritorna True se la run è stata
+    gestita come duplicato (già finalizzata come DUPLICATE).
+
+    Il dedup si applica solo alle run a file singolo: le run multi-file
+    (merge video, immagini multiple) e le run elaborate_only non vi rientrano.
+    """
+    input_hash = guardrails.sha256_hash(data)
+    repo.update_run(run.run_id, input_hash=input_hash)
+
+    duplicate = repo.find_done_by_hash(input_hash)
+    if duplicate is None or not _same_configuration(run, duplicate):
+        return False
+
+    repo.update_run(
+        run.run_id,
+        input_pages=duplicate.input_pages,
+        raw_json_ref=duplicate.raw_json_ref,
+        final_json_ref=duplicate.final_json_ref,
+        screenshots_ref=duplicate.screenshots_ref,
+        output_dir_ref=duplicate.output_dir_ref,
+        zip_ref=duplicate.zip_ref,
+        output_path=duplicate.output_path,
+        output_size_bytes=duplicate.output_size_bytes,
+        chunk_count=duplicate.chunk_count,
+        uncertainty_count=duplicate.uncertainty_count,
+        tokens_in=0,
+        tokens_out=0,
+        tokens_total=0,
+        cost_eur=0.0,
+        error_message=f"Duplicato della run {duplicate.run_id}",
+    )
+    finalize_run(repo, run.run_id, RunStatus.DUPLICATE, run.started_at)
+    return True
+
+
+def _same_configuration(run: RunRecord, duplicate: RunRecord) -> bool:
+    return (
+        run.model_id == duplicate.model_id
+        and run.language == duplicate.language
+        and run.output_mode == duplicate.output_mode
+        and run.content_type == duplicate.content_type
+        and run.html_mode == duplicate.html_mode
+    )
 
 
 # --- Caricamento input ---

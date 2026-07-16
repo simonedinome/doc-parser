@@ -1,7 +1,8 @@
 # doc-parser
 
-Web app Streamlit + CLI per trasformare video, PDF e documenti Office in documentazione
-strutturata (procedure, glossario, chunk RAG) tramite LLM multi-provider.
+Web app Streamlit + CLI per trasformare video, PDF e documenti Office (docx, doc
+legacy, xlsx, csv, txt, immagini) in documentazione strutturata (procedure,
+glossario, chunk RAG) tramite LLM multi-provider (Gemini nativo, OpenRouter).
 
 ## Prerequisiti
 
@@ -22,6 +23,24 @@ cp users.example.yaml users.yaml
 ```bash
 streamlit run doc_parser/ui/app.py
 ```
+
+Per la gestione operativa (riavvio dopo modifica `.env`, gestione utenti, reset
+dati, troubleshooting) vedi [`RUNBOOK.md`](RUNBOOK.md).
+
+## Architettura in breve
+
+- `doc_parser/pipeline/core.py` — motore condiviso: guardrail, dedup, step 1/2
+  video, percorso single-step per i formati non video, KB densa, Rielabora.
+  Invocato sia dal worker in background (UI) sia dalla CLI: nessuna logica di
+  elaborazione duplicata tra i due entrypoint.
+- `doc_parser/providers/` — Gemini (API nativa) e OpenRouter (Claude/GPT),
+  interfaccia comune `BaseProvider.generate()`.
+- `doc_parser/output/` — builder degli artefatti finali (procedura.txt,
+  glossario.txt, rag_chunks.jsonl, html, zip), sempre a partire dal JSON finale.
+- `doc_parser/storage/`, `doc_parser/worker/`, `doc_parser/auth/` — persistenza
+  SQLite, worker in background, autenticazione password/bcrypt.
+- `doc_parser/ui/` — pagine Streamlit (Elabora, Le mie richieste, Log, Log tecnico).
+- `doc_parser/cli/` — CLI batch e coda YAML, secondo entrypoint sullo stesso motore.
 
 ## CLI
 
@@ -52,5 +71,13 @@ python -m doc_parser.cli --help
 ## Configurazione modelli
 
 I modelli LLM disponibili in UI e CLI sono definiti in `models.yaml`, con prezzi EUR/1M
-token a snapshot (data e fonte annotate nel file). Aggiornare `models.yaml` per cambiare
-il listino o i prezzi.
+token a snapshot (data e fonte annotate nel file). Prima di modificare il listino,
+verifica ID e prezzi correnti contro l'endpoint OpenRouter `/api/v1/models` e il
+listino ufficiale Gemini — non aggiornarli a memoria. Nessun riavvio necessario dopo
+la modifica: il file è riletto a ogni run.
+
+## Test
+
+```bash
+pytest doc_parser/tests/
+```

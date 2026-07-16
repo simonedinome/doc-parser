@@ -123,9 +123,19 @@ def test_video_two_step_rewrite(monkeypatch, repo, settings) -> None:
     assert updated.step2_model == OPENROUTER_MODEL
     assert updated.step1_tokens_in == 1000 and updated.step2_tokens_in == 500
     assert updated.tokens_in == 1500 and updated.tokens_out == 500
-    assert updated.cost_eur > 0
     assert len(step1.calls) == 1
     assert len(step2.calls) == 1
+
+    # Costo aggregato tra due provider diversi (Gemini step1 + Anthropic/OpenRouter
+    # step2): verifica la matematica esatta, non solo "> 0".
+    from doc_parser.core.pricing import compute_cost
+
+    step1_expected = compute_cost(STEP1_MODEL, 1000, 200, settings.models_file)
+    step2_expected = compute_cost(OPENROUTER_MODEL, 500, 300, settings.models_file)
+    assert updated.step1_cost_eur == pytest.approx(step1_expected.cost_eur)
+    assert updated.step2_cost_eur == pytest.approx(step2_expected.cost_eur)
+    assert updated.cost_eur == pytest.approx(step1_expected.cost_eur + step2_expected.cost_eur)
+    assert updated.cost_eur > 0
 
     assert updated.zip_ref and updated.output_dir_ref
     assert updated.output_path == updated.zip_ref
@@ -416,3 +426,63 @@ def test_missing_input_raises_guardrail(repo, settings) -> None:
 
     with pytest.raises(GuardrailRejection, match="mancante"):
         process_run(run, repo, settings)
+
+
+def test_dedup_reuses_output_for_identical_file_and_config(monkeypatch, repo, settings) -> None:
+    pdf_bytes = _sample_pdf_bytes()
+    steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
+    provider = ScriptedProvider([(_screencast_response(steps), 100, 20)])
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
+
+    first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL)
+    process_run(first, repo, settings)
+    first = repo.get_run(first.run_id)
+    assert first.status == RunStatus.DONE
+
+    second = _document_run(repo, "copia.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL)
+    process_run(second, repo, settings)
+    second = repo.get_run(second.run_id)
+
+    assert second.status == RunStatus.DUPLICATE
+    assert second.final_json_ref == first.final_json_ref
+    assert second.zip_ref == first.zip_ref
+    assert second.tokens_total == 0 and second.cost_eur == 0.0
+    assert first.run_id in (second.error_message or "")
+    assert len(provider.calls) == 1  # nessuna seconda chiamata LLM
+
+
+def test_dedup_does_not_trigger_for_different_model(monkeypatch, repo, settings) -> None:
+    pdf_bytes = _sample_pdf_bytes()
+    steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
+    provider_a = ScriptedProvider([(_screencast_response(steps), 100, 20)])
+    provider_b = ScriptedProvider([(_screencast_response(steps), 100, 20)])
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider_a, GEMINI_LITE_MODEL: provider_b})
+
+    first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL)
+    process_run(first, repo, settings)
+
+    second = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", GEMINI_LITE_MODEL)
+    process_run(second, repo, settings)
+    second = repo.get_run(second.run_id)
+
+    assert second.status == RunStatus.DONE
+    assert len(provider_a.calls) == 1
+    assert len(provider_b.calls) == 1
+
+
+def test_dedup_does_not_trigger_for_different_output_mode(monkeypatch, repo, settings) -> None:
+    pdf_bytes = _sample_pdf_bytes()
+    steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
+    chunks_response = json.dumps({"chunks": [{"index": 1, "title": "T", "text": "Testo.", "has_uncertainty": False}]})
+    provider = ScriptedProvider([(_screencast_response(steps), 100, 20), (chunks_response, 50, 10)])
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
+
+    first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL, output_mode="documentazione")
+    process_run(first, repo, settings)
+
+    second = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL, output_mode="kb_densa")
+    process_run(second, repo, settings)
+    second = repo.get_run(second.run_id)
+
+    assert second.status == RunStatus.DONE
+    assert len(provider.calls) == 2
