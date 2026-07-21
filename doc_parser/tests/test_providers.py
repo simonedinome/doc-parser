@@ -71,7 +71,22 @@ def _fake_gemini_client(response_text: str) -> MagicMock:
     return client
 
 
-def test_gemini_generate_with_attachment_mocked() -> None:
+def test_gemini_generate_with_large_attachment_uses_files_api() -> None:
+    provider = GeminiProvider(api_key="test-key", model="gemini-2.5-flash-lite")
+    provider._client = _fake_gemini_client('{"ok": true}')
+    large_data = b"%PDF-fake" + b"0" * (21 * 1024 * 1024)
+
+    raw, tokens_in, tokens_out = provider.generate(
+        "system", "user", [Attachment(data=large_data, mime_type="application/pdf", filename="a.pdf")]
+    )
+
+    assert raw == '{"ok": true}'
+    assert (tokens_in, tokens_out) == (1000, 200)
+    provider._client.files.upload.assert_called_once()
+    provider._client.files.delete.assert_called_once()
+
+
+def test_gemini_small_attachment_sent_inline_without_upload() -> None:
     provider = GeminiProvider(api_key="test-key", model="gemini-2.5-flash-lite")
     provider._client = _fake_gemini_client('{"ok": true}')
 
@@ -81,8 +96,8 @@ def test_gemini_generate_with_attachment_mocked() -> None:
 
     assert raw == '{"ok": true}'
     assert (tokens_in, tokens_out) == (1000, 200)
-    provider._client.files.upload.assert_called_once()
-    provider._client.files.delete.assert_called_once()
+    provider._client.files.upload.assert_not_called()
+    provider._client.files.delete.assert_not_called()
 
 
 def test_gemini_generate_without_attachments_skips_upload() -> None:
@@ -113,6 +128,23 @@ def test_gemini_permanent_error_is_classified() -> None:
 
     with pytest.raises(PermanentProviderError):
         provider.generate("system", "user")
+
+
+def test_gemini_access_token_type_unsupported_has_clear_message() -> None:
+    provider = GeminiProvider(api_key="test-key", model="gemini-2.5-flash-lite")
+    client = MagicMock()
+    client.models.generate_content.side_effect = RuntimeError(
+        "401 UNAUTHENTICATED. ... ACCESS_TOKEN_TYPE_UNSUPPORTED ... FileService.CreateFile ..."
+    )
+    provider._client = client
+
+    with pytest.raises(PermanentProviderError) as exc_info:
+        provider.generate("system", "user")
+
+    message = str(exc_info.value)
+    assert "AQ." in message
+    assert "aistudio.google.com/apikey" in message
+    assert "ACCESS_TOKEN_TYPE_UNSUPPORTED" in message  # dettaglio tecnico preservato
 
 
 # --- OpenRouter (mockato) ---
@@ -195,3 +227,27 @@ def test_openrouter_bad_request_is_permanent() -> None:
 
     with pytest.raises(PermanentProviderError):
         provider.generate("system", "user")
+
+
+def test_openrouter_insufficient_balance_is_permanent_with_clear_message() -> None:
+    provider = OpenRouterProvider(api_key="test-key", model="openai/gpt-5.2")
+    provider._client = MagicMock()
+    provider._client.chat.completions.create.side_effect = APIStatusError(
+        "This request requires at least $0.50 in balance for files",
+        response=httpx.Response(402, request=httpx.Request("POST", "https://x")),
+        body=None,
+    )
+
+    with pytest.raises(PermanentProviderError) as exc_info:
+        provider.generate(
+            "system",
+            "user",
+            [Attachment(data=b"%PDF-fake", mime_type="application/pdf", filename="a.pdf")],
+        )
+
+    message = str(exc_info.value)
+    assert "Saldo OpenRouter insufficiente" in message
+    assert "Ricarica il credito" in message
+    assert "openrouter.ai/credits" in message
+    assert "This request requires at least $0.50 in balance for files" in message  # dettaglio tecnico preservato
+    assert provider._client.chat.completions.create.call_count == 1  # nessun retry

@@ -21,6 +21,13 @@ from doc_parser.providers.retry import with_retry
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _TRANSIENT_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+_INSUFFICIENT_BALANCE_STATUS_CODE = 402
+_INSUFFICIENT_BALANCE_MESSAGE = (
+    "Saldo OpenRouter insufficiente per completare la richiesta (HTTP 402): per "
+    'l\'elaborazione di file nativi (plugin "file-parser") sono necessari almeno '
+    "$0.50 di credito residuo sul tuo account OpenRouter. Ricarica il credito su "
+    "https://openrouter.ai/credits e riprova."
+)
 
 
 class OpenRouterProvider(BaseProvider):
@@ -83,6 +90,10 @@ class OpenRouterProvider(BaseProvider):
         except APIStatusError as exc:
             if exc.status_code in _TRANSIENT_STATUS_CODES:
                 raise TransientProviderError(str(exc)) from exc
+            if exc.status_code == _INSUFFICIENT_BALANCE_STATUS_CODE:
+                raise PermanentProviderError(
+                    f"{_INSUFFICIENT_BALANCE_MESSAGE}\n\nDettaglio tecnico: {exc}"
+                ) from exc
             raise PermanentProviderError(str(exc)) from exc
         except APIError as exc:
             raise TransientProviderError(str(exc)) from exc

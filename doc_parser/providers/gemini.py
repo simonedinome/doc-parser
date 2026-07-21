@@ -21,6 +21,7 @@ from doc_parser.providers.retry import with_retry
 
 _UPLOAD_POLL_SECONDS = 2.0
 _UPLOAD_TIMEOUT_SECONDS = 300.0
+_INLINE_DATA_MAX_BYTES = 20 * 1024 * 1024  # 20 MB: sotto soglia, dati inline invece di Files API
 _TRANSIENT_MARKERS = (
     "429",
     "500",
@@ -30,6 +31,15 @@ _TRANSIENT_MARKERS = (
     "RESOURCE_EXHAUSTED",
     "UNAVAILABLE",
     "DEADLINE_EXCEEDED",
+)
+_AUTH_MARKERS = ("ACCESS_TOKEN_TYPE_UNSUPPORTED", "UNAUTHENTICATED")
+_AUTH_ERROR_MESSAGE = (
+    "Autenticazione Gemini rifiutata (HTTP 401 ACCESS_TOKEN_TYPE_UNSUPPORTED): le chiavi "
+    'API Gemini in formato "AQ." non sono al momento accettate dalla Files API di Google '
+    '(necessaria per i file di grandi dimensioni, es. i video), pur funzionando per le '
+    "richieste testuali dirette. Verifica il formato della tua GEMINI_API_KEY su "
+    "https://aistudio.google.com/apikey: se è \"AQ.\", si tratta di una restrizione nota "
+    "lato Google sul tipo di chiave, non di un problema di configurazione dell'app."
 )
 
 
@@ -57,9 +67,15 @@ class GeminiProvider(BaseProvider):
         attachments: list[Attachment] | None = None,
     ) -> tuple[str, int, int]:
         attachments = attachments or []
-        uploaded = [(self._upload(a), a.mime_type) for a in attachments]
+        inline_parts = []
+        uploaded: list[tuple] = []
+        for a in attachments:
+            if len(a.data) <= _INLINE_DATA_MAX_BYTES:
+                inline_parts.append(genai_types.Part.from_bytes(data=a.data, mime_type=a.mime_type))
+            else:
+                uploaded.append((self._upload(a), a.mime_type))
         try:
-            parts = [
+            parts = list(inline_parts) + [
                 genai_types.Part.from_uri(file_uri=f.uri, mime_type=mime_type)
                 for f, mime_type in uploaded
             ]
@@ -146,4 +162,6 @@ def _classify(exc: Exception) -> TransientProviderError | PermanentProviderError
     message = str(exc)
     if any(marker in message for marker in _TRANSIENT_MARKERS):
         return TransientProviderError(message)
+    if any(marker in message for marker in _AUTH_MARKERS):
+        return PermanentProviderError(f"{_AUTH_ERROR_MESSAGE}\n\nDettaglio tecnico: {message}")
     return PermanentProviderError(message)
