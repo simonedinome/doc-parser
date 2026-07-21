@@ -8,6 +8,7 @@ from doc_parser.core.models import RunRecord, RunStatus
 from doc_parser.core.pricing import load_models_config
 from doc_parser.ui.context import get_app_context
 from doc_parser.ui.format import (
+    cost_summary_windows,
     download_filename,
     friendly_row,
     has_active,
@@ -23,7 +24,21 @@ def render() -> None:
         st.stop()
 
     st.title("Le mie richieste")
+    _cost_summary(user.upn)
     _table(user.upn)
+
+
+@st.fragment(run_every="10s")
+def _cost_summary(upn: str) -> None:
+    _, repo, _, _ = get_app_context()
+    st.subheader("Riepilogo costi")
+    cols = st.columns(3)
+    for col, (label, rows) in zip(cols, cost_summary_windows(repo, upn)):
+        row = rows[0] if rows else {"cost_eur": 0.0, "run_count": 0, "tokens_total": 0}
+        with col:
+            st.metric(label, f"{row['cost_eur']:.4f} EUR")
+            st.caption(f"{row['run_count']} run · {row['tokens_total']:,} token")
+    st.divider()
 
 
 @st.fragment(run_every="3s")

@@ -8,7 +8,12 @@ import streamlit as st
 
 from doc_parser.core.models import RunStatus
 from doc_parser.ui.context import get_app_context
-from doc_parser.ui.format import fmt_dt, input_download_entries, output_artifact_entries
+from doc_parser.ui.format import (
+    cost_summary_windows,
+    fmt_dt,
+    input_download_entries,
+    output_artifact_entries,
+)
 
 
 def render() -> None:
@@ -19,6 +24,27 @@ def render() -> None:
         st.stop()
 
     st.title("Log tecnico")
+
+    st.subheader("Riepilogo costi per utente")
+    for idx, (label, rows) in enumerate(cost_summary_windows(repo)):
+        with st.expander(label, expanded=(idx == 0)):
+            if rows:
+                st.dataframe(
+                    [
+                        {
+                            "Utente": r["group_key"],
+                            "Run": r["run_count"],
+                            "Token": r["tokens_total"],
+                            "Costo (EUR)": f"{r['cost_eur']:.4f}",
+                        }
+                        for r in rows
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            else:
+                st.caption("Nessuna run nel periodo.")
+    st.divider()
 
     today = datetime.now(timezone.utc).date()
     col_from, col_to = st.columns(2)

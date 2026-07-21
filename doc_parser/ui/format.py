@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from doc_parser.core.models import RunRecord, RunStatus
+from doc_parser.core.models import RunRecord, RunStatus, utcnow
 
 STATUS_BADGES: dict[RunStatus, str] = {
     RunStatus.QUEUED: "🕓 In coda",
@@ -53,6 +53,7 @@ def friendly_row(run: RunRecord) -> dict:
         "Modello": run.model_id or "",
         "Output": output_name(run),
         "Stato": badge(run.status),
+        "Costo (EUR)": f"{run.cost_eur:.4f}" if run.cost_eur is not None else "",
         "Costo step1 (EUR)": f"{run.step1_cost_eur:.4f}" if run.step1_cost_eur is not None else "",
         "Costo step2 (EUR)": f"{run.step2_cost_eur:.4f}" if run.step2_cost_eur is not None else "",
         "Creata": fmt_dt(run.created_at),
@@ -73,6 +74,32 @@ def input_download_entries(repo, run: RunRecord) -> list[tuple[str, str]]:
     if run.input_path:
         return [(run.input_filename or Path(run.input_path).name, run.input_path)]
     return []
+
+
+_COST_WINDOWS = [
+    ("Ultime 24 ore", timedelta(hours=24)),
+    ("Ultimi 7 giorni", timedelta(days=7)),
+    ("Ultimi 28 giorni", timedelta(days=28)),
+]
+
+
+def cost_summary_windows(repo, upn: str | None = None) -> list[tuple[str, list[dict]]]:
+    """Riepilogo costi per utente su 3 finestre mobili (24h/7g/28g).
+
+    Ritorna ``[(etichetta_finestra, righe_per_utente)]``, dove ogni riga è
+    ``{"group_key": upn, "run_count", "tokens_total", "cost_eur"}`` (stesso
+    formato di ``Repository.aggregate_costs``). Se ``upn`` è specificato,
+    filtra alla sola riga di quell'utente (per «Le mie richieste»);
+    altrimenti ritorna le righe di tutti gli utenti (per «Log»/«Log tecnico»).
+    """
+    now = utcnow()
+    result = []
+    for label, delta in _COST_WINDOWS:
+        rows = repo.aggregate_costs(by="user", since=now - delta)
+        if upn is not None:
+            rows = [r for r in rows if r["group_key"] == upn]
+        result.append((label, rows))
+    return result
 
 
 def output_artifact_entries(run: RunRecord) -> list[tuple[str, str]]:
