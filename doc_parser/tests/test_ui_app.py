@@ -91,17 +91,17 @@ def test_elabora_page_renders_all_options(app_env) -> None:
     assert "Tipo di contenuto" in labels
     assert "Modello" in labels
     assert "Lingua output" in labels
-    assert "Modalità HTML" in labels
-    assert any(cb.label.startswith("Unisci") for cb in at.checkbox)
+    assert "Modalità HTML" not in labels
+    assert "Modalità output" not in labels
+    assert any(r.label == "Modalità di elaborazione" for r in at.radio)
+    checkbox_labels = [cb.label for cb in at.checkbox]
+    assert any("Procedura" in label for label in checkbox_labels)
+    assert any("Glossario" in label for label in checkbox_labels)
+    assert any("RAG" in label for label in checkbox_labels)
 
 
-def test_elabora_page_hides_video_only_options_for_doc_content_type(app_env) -> None:
+def test_elabora_page_content_type_has_only_document_and_video(app_env) -> None:
     at = AppTest.from_file(_APP_PATH, default_timeout=30).run()
     at = _login(at, "utente@demo.local", "demo123!")
     content_type_box = next(sb for sb in at.selectbox if sb.label == "Tipo di contenuto")
-    content_type_box.set_value("Documento (PDF, Word, Excel, CSV, testo, immagini)")
-    at = at.run()
-    assert not at.exception
-    labels = [sb.label for sb in at.selectbox]
-    assert "Modalità output" in labels
-    assert not any(cb.label.startswith("Unisci") for cb in at.checkbox)
+    assert content_type_box.options == ["Documento", "Video"]

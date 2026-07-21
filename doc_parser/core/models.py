@@ -65,7 +65,7 @@ class RunRecord(BaseModel):
     input_type: str = "pdf"
     content_type: str | None = None
     output_mode: str = "documentazione"
-    html_mode: str = "standalone"
+    output_artifacts: str = "html_standalone,procedura,glossario,rag_chunks"
     language: str = "it"
     model_id: str | None = None
     parent_run_id: str | None = None

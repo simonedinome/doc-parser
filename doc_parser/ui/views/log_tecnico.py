@@ -6,8 +6,9 @@ from datetime import datetime, time, timedelta, timezone
 
 import streamlit as st
 
+from doc_parser.core.models import RunStatus
 from doc_parser.ui.context import get_app_context
-from doc_parser.ui.format import fmt_dt
+from doc_parser.ui.format import fmt_dt, input_download_entries, output_artifact_entries
 
 
 def render() -> None:
@@ -41,6 +42,35 @@ def render() -> None:
         st.dataframe(rows, use_container_width=True, hide_index=True)
     else:
         st.info("Nessuna run nel periodo.")
+
+    downloadable = [r for r in runs if r.status in (RunStatus.DONE, RunStatus.DUPLICATE)]
+    if downloadable:
+        st.subheader("Download file (input/output di qualunque run)")
+        options = {f"{r.requester_upn} — {r.input_filename} — {r.run_id[:8]}": r for r in downloadable}
+        choice = st.selectbox("Run", list(options))
+        run = options[choice]
+
+        if run.output_path:
+            st.download_button(
+                "Scarica output (zip completo)",
+                data=repo.get_file(run.output_path),
+                file_name=f"{run.run_id[:8]}_output",
+                key=f"tech_dl_output_{run.run_id}",
+            )
+        for name, path in output_artifact_entries(run):
+            st.download_button(
+                f"Output: {name}",
+                data=repo.get_file(path),
+                file_name=name,
+                key=f"tech_dl_artifact_{run.run_id}_{name}",
+            )
+        for name, ref in input_download_entries(repo, run):
+            st.download_button(
+                f"Input: {name}",
+                data=repo.get_file(ref),
+                file_name=name,
+                key=f"tech_dl_input_{run.run_id}_{name}",
+            )
 
     st.subheader("Totali")
     tab_user, tab_session, tab_run = st.tabs(["Per utente", "Per sessione", "Per run"])

@@ -23,8 +23,9 @@ settings:
   # Modalità output: documentazione | kb_densa (kb_densa solo per input non video)
   output_mode: documentazione
 
-  # Modalità HTML: standalone | folder | both
-  html_mode: standalone
+  # File da avere in output, separati da virgola: html_standalone | html_folder |
+  # procedura | glossario | rag_chunks
+  output_artifacts: html_standalone,procedura,glossario,rag_chunks
 
   # Numero massimo di run eseguite in parallelo
   parallel_runs: 3
@@ -53,7 +54,7 @@ runs:
     settings:
       content_type: webinar
       model_id: openai/gpt-5.2
-      html_mode: both
+      output_artifacts: html_standalone,html_folder,procedura,glossario,rag_chunks
 
   # Esempio 3 — documento singolo (non video), modalità KB densa
   - name: manuale-prodotto

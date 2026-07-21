@@ -25,7 +25,7 @@ class RunSettings:
     model_id: str | None = None
     language: str | None = None
     output_mode: str | None = None
-    html_mode: str | None = None
+    output_artifacts: str | None = None
 
 
 @dataclass
@@ -41,7 +41,7 @@ class GlobalSettings:
     model_id: str = "anthropic/claude-haiku-4.5"
     language: str = "it"
     output_mode: str = "documentazione"
-    html_mode: str = "standalone"
+    output_artifacts: str = "html_standalone,procedura,glossario,rag_chunks"
     parallel_runs: int = 3
     requester_upn: str = "cli@local"
 
@@ -59,7 +59,7 @@ def resolve_run_settings(global_settings: GlobalSettings, run_settings: RunSetti
         "model_id": run_settings.model_id or global_settings.model_id,
         "language": run_settings.language or global_settings.language,
         "output_mode": run_settings.output_mode or global_settings.output_mode,
-        "html_mode": run_settings.html_mode or global_settings.html_mode,
+        "output_artifacts": run_settings.output_artifacts or global_settings.output_artifacts,
     }
 
 
@@ -73,7 +73,9 @@ def load_runs_config(path: Path) -> RunsConfig:
         model_id=raw_settings.get("model_id", "anthropic/claude-haiku-4.5"),
         language=raw_settings.get("language", "it"),
         output_mode=raw_settings.get("output_mode", "documentazione"),
-        html_mode=raw_settings.get("html_mode", "standalone"),
+        output_artifacts=raw_settings.get(
+            "output_artifacts", "html_standalone,procedura,glossario,rag_chunks"
+        ),
         parallel_runs=raw_settings.get("parallel_runs", 3),
         requester_upn=raw_settings.get("requester_upn", "cli@local"),
     )
@@ -110,7 +112,7 @@ def load_runs_config(path: Path) -> RunsConfig:
             model_id=raw_run_settings.get("model_id"),
             language=raw_run_settings.get("language"),
             output_mode=raw_run_settings.get("output_mode"),
-            html_mode=raw_run_settings.get("html_mode"),
+            output_artifacts=raw_run_settings.get("output_artifacts"),
         )
         if run_settings.content_type is not None:
             _validate_content_type(run_settings.content_type, f"run '{name}'")

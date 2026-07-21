@@ -22,19 +22,23 @@ def build_artifacts(
     data: dict,
     source_filename: str,
     language: str,
-    html_mode: str,
+    output_artifacts: list[str],
     screenshot_map: dict[tuple[str, int], Path | None],
     log: Logger,
 ) -> dict[str, bytes]:
-    """Ritorna ``{nome_file: contenuto}`` per tutti gli artefatti testuali/HTML."""
-    files: dict[str, bytes] = {
-        "procedura.txt": build_procedura(data, source_filename, language).encode("utf-8"),
-        "glossario.txt": build_glossario(data, language).encode("utf-8"),
-        "rag_chunks.jsonl": build_rag_jsonl(data, source_filename).encode("utf-8"),
-    }
-    if html_mode in ("folder", "both"):
+    """Ritorna ``{nome_file: contenuto}`` solo per gli artefatti selezionati
+    dall'utente in ``output_artifacts`` (chiavi: ``procedura``, ``glossario``,
+    ``rag_chunks``, ``html_standalone``, ``html_folder``)."""
+    files: dict[str, bytes] = {}
+    if "procedura" in output_artifacts:
+        files["procedura.txt"] = build_procedura(data, source_filename, language).encode("utf-8")
+    if "glossario" in output_artifacts:
+        files["glossario.txt"] = build_glossario(data, language).encode("utf-8")
+    if "rag_chunks" in output_artifacts:
+        files["rag_chunks.jsonl"] = build_rag_jsonl(data, source_filename).encode("utf-8")
+    if "html_folder" in output_artifacts:
         files[HTML_FILENAME_FOLDER] = build_html_folder(data, screenshot_map, language).encode("utf-8")
-    if html_mode in ("standalone", "both"):
+    if "html_standalone" in output_artifacts:
         files[HTML_FILENAME_STANDALONE] = build_html_standalone(data, screenshot_map, language).encode(
             "utf-8"
         )
@@ -46,7 +50,7 @@ def build_output_zip(
     data: dict,
     source_filename: str,
     language: str,
-    html_mode: str,
+    output_artifacts: list[str],
     screenshot_map: dict[tuple[str, int], Path | None],
     screenshots_dir: Path | None,
     log: Logger,
@@ -55,6 +59,6 @@ def build_output_zip(
 
     Ritorna (artefatti, zip_bytes).
     """
-    files = build_artifacts(data, source_filename, language, html_mode, screenshot_map, log)
-    zip_bytes = create_zip(files, screenshots_dir, html_mode)
+    files = build_artifacts(data, source_filename, language, output_artifacts, screenshot_map, log)
+    zip_bytes = create_zip(files, screenshots_dir, output_artifacts)
     return files, zip_bytes

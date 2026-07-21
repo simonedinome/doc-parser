@@ -68,7 +68,7 @@ def _video_run(
     model_id: str,
     content_type: str = "screencast",
     language: str = "it",
-    html_mode: str = "standalone",
+    output_artifacts: str = "html_standalone,procedura,glossario,rag_chunks",
 ) -> RunRecord:
     run = RunRecord(
         session_id="s1",
@@ -78,7 +78,7 @@ def _video_run(
         content_type=content_type,
         model_id=model_id,
         language=language,
-        html_mode=html_mode,
+        output_artifacts=output_artifacts,
     )
     run.input_path = repo.save_input_file(run.run_id, "video.mp4", b"video-bytes-fittizi")
     return repo.create_run(run)
@@ -149,7 +149,7 @@ def test_video_two_step_rewrite(monkeypatch, repo, settings) -> None:
 
 
 def test_video_folder_html_mode_includes_screenshots_and_english_labels(monkeypatch, repo, settings) -> None:
-    run = _video_run(repo, GEMINI_LITE_MODEL, language="en", html_mode="folder")
+    run = _video_run(repo, GEMINI_LITE_MODEL, language="en", output_artifacts="html_folder,procedura,glossario,rag_chunks")
     steps = [{"number": 1, "timestamp": "00:01", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
     provider = ScriptedProvider([(_screencast_response(steps), 100, 10)])
     _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
@@ -243,10 +243,19 @@ def test_step2_validation_failure_marks_failed_and_keeps_raw(monkeypatch, repo, 
     assert len(step2.calls) == settings.retry_max_attempts + 1
 
 
-def _document_run(repo: SqliteRepository, filename: str, data: bytes, input_type: str, model_id: str, output_mode: str = "documentazione") -> RunRecord:
+def _document_run(
+    repo: SqliteRepository,
+    filename: str,
+    data: bytes,
+    input_type: str,
+    model_id: str,
+    output_mode: str = "documentazione",
+    output_artifacts: str = "html_standalone,procedura,glossario,rag_chunks",
+) -> RunRecord:
     run = RunRecord(
         session_id="s1", requester_upn="utente@demo.local", input_filename=filename,
         input_type=input_type, model_id=model_id, output_mode=output_mode,
+        output_artifacts=output_artifacts,
     )
     run.input_path = repo.save_input_file(run.run_id, filename, data)
     return repo.create_run(run)
@@ -332,6 +341,61 @@ def test_images_multiple_become_single_document(monkeypatch, repo, settings) -> 
     updated = repo.get_run(run.run_id)
     assert updated.status == RunStatus.DONE
     assert len(provider.calls[0][2]) == 2
+
+
+def test_document_multi_file_group_merge(monkeypatch, repo, settings) -> None:
+    import io
+
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("Contenuto docx")
+    docx_buffer = io.BytesIO()
+    document.save(docx_buffer)
+
+    run = RunRecord(
+        session_id="s1", requester_upn="utente@demo.local", input_filename="run-documenti",
+        input_type="document", model_id=OPENROUTER_MODEL,
+    )
+    ref_pdf = repo.save_input_file(run.run_id, "a.pdf", _sample_pdf_bytes())
+    ref_docx = repo.save_input_file(run.run_id, "b.docx", docx_buffer.getvalue())
+    manifest = [{"filename": "a.pdf", "path_ref": ref_pdf}, {"filename": "b.docx", "path_ref": ref_docx}]
+    run.input_manifest_ref = repo.save_input_file(run.run_id, "manifest.json", json.dumps(manifest).encode("utf-8"))
+    repo.create_run(run)
+
+    steps_a = [{"number": 1, "timestamp": "Pagina 1", "title": "A1", "description": "d", "notes": "", "embedding_keywords": []}]
+    steps_b = [{"number": 1, "timestamp": "Pagina 1", "title": "B1", "description": "d", "notes": "", "embedding_keywords": []}]
+    provider = ScriptedProvider(
+        [(_screencast_response(steps_a, title="Doc A"), 100, 10), (_screencast_response(steps_b, title="Doc B"), 100, 10)]
+    )
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
+
+    process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    assert updated.status == RunStatus.DONE
+    merged = json.loads(repo.get_file(updated.final_json_ref))
+    assert [p["id"] for p in merged["procedures"]] == ["proc_001", "proc_002"]
+    assert len(provider.calls) == 2  # una chiamata LLM per file, poi merge
+    assert updated.screenshots_ref is not None  # screenshot estratti solo per il PDF del gruppo
+
+
+def test_document_output_artifacts_selection_filters_zip_contents(monkeypatch, repo, settings) -> None:
+    run = _document_run(
+        repo, "manuale.pdf", _sample_pdf_bytes(), "pdf", OPENROUTER_MODEL,
+        output_artifacts="procedura,rag_chunks",
+    )
+    steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
+    provider = ScriptedProvider([(_screencast_response(steps), 400, 100)])
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
+
+    process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    assert updated.status == RunStatus.DONE
+    zip_bytes = repo.get_file(updated.zip_ref)
+    names = set(zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist())
+    assert names == {"procedura.txt", "rag_chunks.jsonl", "log.txt"}
 
 
 def test_kb_densa_output_mode(monkeypatch, repo, settings) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -61,3 +62,27 @@ def friendly_row(run: RunRecord) -> dict:
 
 def has_active(runs: list[RunRecord]) -> bool:
     return any(run.status in ACTIVE for run in runs)
+
+
+def input_download_entries(repo, run: RunRecord) -> list[tuple[str, str]]:
+    """Ritorna ``[(nome_file, ref)]`` per i file di input della run, sia a
+    file singolo (``input_path``) sia multi-file (``input_manifest_ref``)."""
+    if run.input_manifest_ref:
+        manifest = json.loads(repo.get_file(run.input_manifest_ref).decode("utf-8"))
+        return [(entry["filename"], entry["path_ref"]) for entry in manifest]
+    if run.input_path:
+        return [(run.input_filename or Path(run.input_path).name, run.input_path)]
+    return []
+
+
+def output_artifact_entries(run: RunRecord) -> list[tuple[str, str]]:
+    """Ritorna ``[(nome_file, path)]`` per i singoli artefatti di output
+    (oltre allo ZIP), letti dalla cartella ``output_dir_ref`` valorizzata
+    dalla modalità "documentazione operativa". Vuoto per KB densa (un solo
+    file, già scaricabile via ``output_path``)."""
+    if not run.output_dir_ref:
+        return []
+    dir_path = Path(run.output_dir_ref)
+    if not dir_path.exists():
+        return []
+    return sorted((p.name, str(p)) for p in dir_path.iterdir() if p.is_file())

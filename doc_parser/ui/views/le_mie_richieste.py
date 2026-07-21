@@ -7,7 +7,13 @@ import streamlit as st
 from doc_parser.core.models import RunRecord, RunStatus
 from doc_parser.core.pricing import load_models_config
 from doc_parser.ui.context import get_app_context
-from doc_parser.ui.format import download_filename, friendly_row, has_active
+from doc_parser.ui.format import (
+    download_filename,
+    friendly_row,
+    has_active,
+    input_download_entries,
+    output_artifact_entries,
+)
 
 
 def render() -> None:
@@ -40,14 +46,37 @@ def _table(upn: str) -> None:
     downloadable = [r for r in runs if r.output_path and r.status in (RunStatus.DONE, RunStatus.DUPLICATE)]
     if downloadable:
         options = {f"{r.input_filename} — {r.run_id[:8]}": r for r in downloadable}
-        choice = st.selectbox("Scarica un output", list(options))
+        choice = st.selectbox("Scarica una run", list(options))
         run = options[choice]
+
         st.download_button(
-            "Scarica",
+            "Scarica output (zip completo)",
             data=repo.get_file(run.output_path),
             file_name=download_filename(run),
             key=f"dl_{run.run_id}",
         )
+
+        artifacts = output_artifact_entries(run)
+        if artifacts:
+            with st.expander("Scarica singoli file di output"):
+                for name, path in artifacts:
+                    st.download_button(
+                        name,
+                        data=repo.get_file(path),
+                        file_name=name,
+                        key=f"dl_artifact_{run.run_id}_{name}",
+                    )
+
+        inputs = input_download_entries(repo, run)
+        if inputs:
+            with st.expander("Scarica file di input"):
+                for name, ref in inputs:
+                    st.download_button(
+                        name,
+                        data=repo.get_file(ref),
+                        file_name=name,
+                        key=f"dl_input_{run.run_id}_{name}",
+                    )
 
     reworkable = [r for r in runs if r.input_type == "video" and r.status == RunStatus.DONE and r.raw_json_ref]
     if reworkable:
@@ -70,7 +99,7 @@ def _table(upn: str) -> None:
                 input_type="video",
                 content_type=source_run.content_type,
                 output_mode=source_run.output_mode,
-                html_mode=source_run.html_mode,
+                output_artifacts=source_run.output_artifacts,
                 language=source_run.language,
                 model_id=model_id,
                 parent_run_id=source_run.run_id,

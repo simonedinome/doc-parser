@@ -39,7 +39,7 @@ def _build_batch_config(args: argparse.Namespace) -> RunsConfig:
         model_id=args.model,
         language=args.language,
         output_mode=args.output_mode,
-        html_mode=args.html_mode,
+        output_artifacts=args.output_artifacts,
         parallel_runs=args.parallel,
         requester_upn=args.requester,
     )
@@ -78,7 +78,14 @@ def main() -> None:
     parser.add_argument("--model", default="anthropic/claude-haiku-4.5", help="ID modello da models.yaml")
     parser.add_argument("--language", default="it", choices=["it", "en"])
     parser.add_argument("--output-mode", default="documentazione", choices=["documentazione", "kb_densa"])
-    parser.add_argument("--html-mode", default="standalone", choices=["standalone", "folder", "both"])
+    parser.add_argument(
+        "--output-artifacts",
+        default="html_standalone,procedura,glossario,rag_chunks",
+        help=(
+            "Lista separata da virgole tra: html_standalone, html_folder, "
+            "procedura, glossario, rag_chunks"
+        ),
+    )
     parser.add_argument("--parallel", type=int, default=3, help="Run in parallelo (solo modalità batch)")
     parser.add_argument("--requester", default="cli@local", help="requester_upn associato alle run create")
     parser.add_argument("--data-dir", metavar="PATH", help="Override di DATA_DIR")

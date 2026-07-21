@@ -83,7 +83,7 @@ def _process_run_config(
             input_type=input_type,
             content_type=effective["content_type"] if is_video else None,
             output_mode=effective["output_mode"],
-            html_mode=effective["html_mode"],
+            output_artifacts=effective["output_artifacts"],
             language=effective["language"],
             model_id=effective["model_id"],
         )

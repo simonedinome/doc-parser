@@ -77,8 +77,8 @@ def resolve_input_type(is_video: bool, filenames: list[str]) -> str:
     scelto) e dai file forniti. Condivisa da UI e CLI per non duplicare la logica.
 
     Solleva GuardrailRejection se i file non sono coerenti con la scelta
-    (es. un non-video per un content_type video, o più file non-immagine
-    per un content_type "doc").
+    (es. un non-video per un content_type video, o un mix di immagini e
+    documenti nello stesso caricamento).
     """
     if is_video:
         for fn in filenames:
@@ -92,6 +92,8 @@ def resolve_input_type(is_video: bool, filenames: list[str]) -> str:
     kinds = [classify_extension(fn) for fn in filenames]
     if all(k == "image" for k in kinds):
         return "image"
+    if any(k == "image" for k in kinds):
+        raise GuardrailRejection("Non è possibile caricare insieme immagini e documenti.")
     if len(filenames) == 1:
         return kinds[0]
-    raise GuardrailRejection("Per i formati non video carica un singolo documento oppure più immagini.")
+    return "document"

@@ -116,9 +116,13 @@ def test_resolve_input_type_doc_multiple_images_become_image_type() -> None:
     assert resolve_input_type(False, ["a.png", "b.jpg"]) == "image"
 
 
-def test_resolve_input_type_doc_multiple_non_image_files_rejected() -> None:
-    with pytest.raises(GuardrailRejection, match="singolo documento"):
-        resolve_input_type(False, ["a.pdf", "b.docx"])
+def test_resolve_input_type_doc_multiple_non_image_files_become_document_group() -> None:
+    assert resolve_input_type(False, ["a.pdf", "b.docx"]) == "document"
+
+
+def test_resolve_input_type_doc_mixing_images_and_documents_rejected() -> None:
+    with pytest.raises(GuardrailRejection, match="insieme immagini e documenti"):
+        resolve_input_type(False, ["a.pdf", "b.png"])
 
 
 def test_resolve_input_type_doc_unsupported_extension_raises() -> None:

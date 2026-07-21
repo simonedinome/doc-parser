@@ -84,7 +84,13 @@ def test_load_runs_config_accepts_legacy_videos_key(tmp_path: Path) -> None:
 
 
 def test_resolve_run_settings_merges_with_global_fallback() -> None:
-    global_settings = GlobalSettings(content_type="screencast", model_id="m1", language="it", output_mode="documentazione", html_mode="standalone")
+    global_settings = GlobalSettings(
+        content_type="screencast",
+        model_id="m1",
+        language="it",
+        output_mode="documentazione",
+        output_artifacts="html_standalone,procedura,glossario,rag_chunks",
+    )
     run_settings = RunSettings(model_id="m2")
     effective = resolve_run_settings(global_settings, run_settings)
     assert effective["model_id"] == "m2"

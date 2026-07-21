@@ -21,19 +21,16 @@ from doc_parser.ingestion.downloader import download_url
 from doc_parser.ui.context import get_app_context
 from doc_parser.ui.format import ACTIVE, badge, download_filename, fmt_dt
 
-_CONTENT_TYPE_LABELS = {
-    "screencast": "Screencast",
-    "webinar": "Webinar",
-    "hybrid": "Ibrido (teoria + procedure)",
-    "doc": "Documento (PDF, Word, Excel, CSV, testo, immagini)",
-}
-_VIDEO_CONTENT_TYPES = {"screencast", "webinar", "hybrid"}
 _LANGUAGE_LABELS = {"it": "Italiano", "en": "English"}
-_HTML_MODE_LABELS = {
-    "standalone": "Standalone (un file, immagini incorporate)",
-    "folder": "Cartella (screenshot separati)",
-    "both": "Entrambe",
-}
+_VIDEO_CONTENT_TYPE = "hybrid"
+_ARTIFACT_OPTIONS = [
+    ("html_standalone", "Documentazione HTML standalone (un file, immagini incorporate)"),
+    ("html_folder", "Documentazione HTML con cartella (screenshot separati)"),
+    ("procedura", "Procedura (procedura.txt)"),
+    ("glossario", "Glossario (glossario.txt)"),
+    ("rag_chunks", "Chunk RAG (rag_chunks.jsonl)"),
+]
+_DEFAULT_ARTIFACTS = {"html_standalone", "procedura", "glossario", "rag_chunks"}
 
 
 def render() -> None:
@@ -49,25 +46,23 @@ def render() -> None:
         "ritrovare la run in «Le mie richieste»."
     )
 
-    content_type_label = st.selectbox("Tipo di contenuto", list(_CONTENT_TYPE_LABELS.values()))
-    content_type = next(k for k, v in _CONTENT_TYPE_LABELS.items() if v == content_type_label)
-    is_video = content_type in _VIDEO_CONTENT_TYPES
+    content_choice = st.selectbox("Tipo di contenuto", ["Documento", "Video"])
+    is_video = content_choice == "Video"
 
     uploaded = st.file_uploader("File", accept_multiple_files=True)
     url_text = st.text_area("Oppure URL (uno per riga)", placeholder="https://esempio.com/video.mp4")
 
-    merge_videos = True
-    if is_video:
-        merge_videos = st.checkbox(
-            "Unisci più video in un unico export",
-            value=True,
-            help="Se disattivato, ogni video/URL genera una run ed export separati.",
-        )
-
-    output_mode = "documentazione"
-    if not is_video:
-        output_mode_label = st.selectbox("Modalità output", ["Documentazione operativa", "KB densa"])
-        output_mode = "kb_densa" if output_mode_label == "KB densa" else "documentazione"
+    processing_mode_label = st.radio(
+        "Modalità di elaborazione",
+        ["Processa di gruppo", "Processa singolarmente"],
+        help=(
+            'Processa di gruppo: "singolo output per tutti i file in input" — i file caricati '
+            "vengono uniti in un'unica documentazione.\n\n"
+            'Processa singolarmente: "output per ciascun file in input" — ogni file/URL genera '
+            "una run ed un export separati."
+        ),
+    )
+    process_as_group = processing_mode_label == "Processa di gruppo"
 
     models = load_models_config(settings.models_file).models
     model_label = st.selectbox("Modello", [m.label for m in models])
@@ -76,27 +71,29 @@ def render() -> None:
     language_label = st.selectbox("Lingua output", list(_LANGUAGE_LABELS.values()))
     language = next(k for k, v in _LANGUAGE_LABELS.items() if v == language_label)
 
-    html_mode = "standalone"
-    if output_mode == "documentazione":
-        html_mode_label = st.selectbox("Modalità HTML", list(_HTML_MODE_LABELS.values()))
-        html_mode = next(k for k, v in _HTML_MODE_LABELS.items() if v == html_mode_label)
+    st.caption("File da avere in output")
+    selected_artifacts: list[str] = []
+    for key, label in _ARTIFACT_OPTIONS:
+        if st.checkbox(label, value=key in _DEFAULT_ARTIFACTS, key=f"artifact_{key}"):
+            selected_artifacts.append(key)
 
     if st.button("Avvia elaborazione", type="primary"):
-        _submit(
-            repo,
-            settings,
-            user,
-            auth.get_session_id(),
-            uploaded or [],
-            url_text,
-            content_type,
-            is_video,
-            merge_videos,
-            output_mode,
-            model_id,
-            language,
-            html_mode,
-        )
+        if not selected_artifacts:
+            st.error("Seleziona almeno un file da avere in output.")
+        else:
+            _submit(
+                repo,
+                settings,
+                user,
+                auth.get_session_id(),
+                uploaded or [],
+                url_text,
+                is_video,
+                process_as_group,
+                model_id,
+                language,
+                selected_artifacts,
+            )
 
     run_id = st.session_state.get("last_run_id")
     if run_id:
@@ -111,13 +108,11 @@ def _submit(
     session_id: str,
     uploaded,
     url_text: str,
-    content_type: str,
     is_video: bool,
-    merge_videos: bool,
-    output_mode: str,
+    process_as_group: bool,
     model_id: str,
     language: str,
-    html_mode: str,
+    output_artifacts: list[str],
 ) -> None:
     files: list[tuple[str, bytes]] = [(f.name, f.getvalue()) for f in uploaded]
 
@@ -149,7 +144,8 @@ def _submit(
         st.error(str(exc))
         return
 
-    groups = [[f] for f in files] if (input_type == "video" and not merge_videos) else [files]
+    groups = [files] if process_as_group else [[f] for f in files]
+    output_artifacts_csv = ",".join(output_artifacts)
 
     last_run_id = None
     for group in groups:
@@ -158,9 +154,9 @@ def _submit(
             requester_upn=user.upn,
             input_filename=group[0][0] if len(group) == 1 else f"{len(group)} file",
             input_type=input_type,
-            content_type=content_type if is_video else None,
-            output_mode=output_mode,
-            html_mode=html_mode,
+            content_type=_VIDEO_CONTENT_TYPE if is_video else None,
+            output_mode="documentazione",
+            output_artifacts=output_artifacts_csv,
             language=language,
             model_id=model_id,
         )
@@ -182,7 +178,7 @@ def _submit(
 
     st.session_state["last_run_id"] = last_run_id
     if len(groups) > 1:
-        st.success(f"{len(groups)} run create (merge disattivato).")
+        st.success(f"{len(groups)} run create (elaborazione singola per file).")
 
 
 @st.fragment(run_every="2s")

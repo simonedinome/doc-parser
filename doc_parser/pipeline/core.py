@@ -70,7 +70,7 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
 
 def _reuse_if_duplicate(run: RunRecord, repo: Repository, data: bytes) -> bool:
     """Se un file identico è già stato elaborato con la stessa configurazione
-    (modello, lingua, output_mode, content_type, html_mode), riusa l'output
+    (modello, lingua, output_mode, content_type, output_artifacts), riusa l'output
     esistente senza una nuova chiamata LLM. Ritorna True se la run è stata
     gestita come duplicato (già finalizzata come DUPLICATE).
 
@@ -112,7 +112,7 @@ def _same_configuration(run: RunRecord, duplicate: RunRecord) -> bool:
         and run.language == duplicate.language
         and run.output_mode == duplicate.output_mode
         and run.content_type == duplicate.content_type
-        and run.html_mode == duplicate.html_mode
+        and run.output_artifacts == duplicate.output_artifacts
     )
 
 
@@ -171,8 +171,9 @@ def _build_and_persist_output(
     screenshot_map = _reconstruct_screenshot_map(screenshots_dir, final_data.get("procedures", []))
     log = Logger()
     log.log("INFO", f"Run {run.run_id} completata")
+    output_artifacts = run.output_artifacts.split(",") if run.output_artifacts else []
     files, zip_bytes = build_output_zip(
-        final_data, source_filename, run.language, run.html_mode, screenshot_map, screenshots_dir, log
+        final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log
     )
 
     artifacts_dir = settings.data_dir / "artifacts" / run.run_id
@@ -358,46 +359,84 @@ def _process_document(
     settings: Settings,
     input_files: list[tuple[str, bytes]],
 ) -> None:
-    filename, data = input_files[0]
-    kind = run.input_type
-
-    attachments: list[Attachment] = []
-    extracted_text: str | None = None
-    screenshots_dir: Path | None = None
-
-    if kind == "pdf":
-        pages = guardrails.inspect_pdf(data, settings.max_pages)
-        repo.update_run(run.run_id, input_pages=pages)
-        attachments = [Attachment(data=data, mime_type="application/pdf", filename=filename)]
-    elif kind in LOCAL_EXTRACTION_KINDS:
-        extracted_text = extract_text(kind, data, settings.xlsx_max_rows_per_sheet)
-    else:
-        raise GuardrailRejection(f"Formato non gestito nel percorso documento: {kind!r}")
-
     if run.output_mode == "kb_densa":
+        filename, data = input_files[0]
+        kind = guardrails.classify_extension(filename)
+        attachments: list[Attachment] = []
+        extracted_text: str | None = None
+        if kind == "pdf":
+            pages = guardrails.inspect_pdf(data, settings.max_pages)
+            repo.update_run(run.run_id, input_pages=pages)
+            attachments = [Attachment(data=data, mime_type="application/pdf", filename=filename)]
+        elif kind in LOCAL_EXTRACTION_KINDS:
+            extracted_text = extract_text(kind, data, settings.xlsx_max_rows_per_sheet)
+        else:
+            raise GuardrailRejection(f"Formato non gestito nel percorso documento: {kind!r}")
         _process_kb_densa(run, repo, settings, attachments, extracted_text)
         return
 
-    system_prompt, user_prompt = resolve_profile_prompts("doc")
-    system_prompt = apply_language_directive(system_prompt, run.language)
-    if extracted_text is not None:
-        user_prompt = f"{user_prompt}\n\n--- CONTENUTO DEL DOCUMENTO ---\n\n{extracted_text}"
-
     provider = get_provider_for_model(run.model_id, settings)
-    raw_text, tokens_in, tokens_out = provider.generate(system_prompt, user_prompt, attachments)
-    data_dict = parser.parse_response(raw_text, "doc")
+    system_prompt, user_prompt_base = resolve_profile_prompts("doc")
+    system_prompt = apply_language_directive(system_prompt, run.language)
 
-    if kind == "pdf":
-        with TemporaryDirectory(prefix="doc_parser_pdfpages_") as tmp_dir:
-            pdf_path_for_screenshots = Path(tmp_dir) / filename
-            pdf_path_for_screenshots.write_bytes(data)
+    results: list[tuple[dict, str]] = []
+    tokens_in_total = tokens_out_total = 0
+    total_pages = 0
+    pdf_files: list[tuple[Path, str]] = []
+
+    with TemporaryDirectory(prefix="doc_parser_doc_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        for filename, data in input_files:
+            kind = guardrails.classify_extension(filename)
+            attachments: list[Attachment] = []
+            user_prompt = user_prompt_base
+
+            if kind == "pdf":
+                pages = guardrails.inspect_pdf(data, settings.max_pages)
+                total_pages += pages
+                attachments = [Attachment(data=data, mime_type="application/pdf", filename=filename)]
+                pdf_path = tmp_path / filename
+                pdf_path.write_bytes(data)
+                pdf_files.append((pdf_path, filename))
+            elif kind in LOCAL_EXTRACTION_KINDS:
+                extracted_text = extract_text(kind, data, settings.xlsx_max_rows_per_sheet)
+                user_prompt = f"{user_prompt}\n\n--- CONTENUTO DEL DOCUMENTO ---\n\n{extracted_text}"
+            else:
+                raise GuardrailRejection(f"Formato non gestito nel percorso documento: {kind!r}")
+
+            raw_text, tokens_in, tokens_out = provider.generate(system_prompt, user_prompt, attachments)
+            tokens_in_total += tokens_in
+            tokens_out_total += tokens_out
+            results.append((parser.parse_response(raw_text, "doc"), filename))
+
+        merged = (
+            merger.merge_run_results(results, run.input_filename or "run")
+            if len(results) > 1
+            else results[0][0]
+        )
+
+        screenshots_dir: Path | None = None
+        if pdf_files:
             screenshots_dir = _screenshots_output_dir(settings, run.run_id)
-            screenshots.extract_pdf_pages(
-                pdf_path_for_screenshots, data_dict.get("procedures", []), screenshots_dir
-            )
+            offset = 0
+            pdf_iter = iter(pdf_files)
+            for data_dict, filename in results:
+                n_procs = len(data_dict.get("procedures", []))
+                procedures_slice = merged.get("procedures", [])[offset : offset + n_procs]
+                offset += n_procs
+                if guardrails.classify_extension(filename) == "pdf":
+                    pdf_path, _ = next(pdf_iter)
+                    screenshots.extract_pdf_pages(pdf_path, procedures_slice, screenshots_dir)
+
+    if total_pages:
+        repo.update_run(run.run_id, input_pages=total_pages)
+    if screenshots_dir is not None:
         repo.update_run(run.run_id, screenshots_ref=str(screenshots_dir))
 
-    _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out, filename, screenshots_dir)
+    output_filename = run.input_filename or results[0][1]
+    _finalize_single_step(
+        run, repo, settings, provider, merged, tokens_in_total, tokens_out_total, output_filename, screenshots_dir
+    )
 
 
 def _process_images(
