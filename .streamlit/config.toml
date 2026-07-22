@@ -1,0 +1,4 @@
+[server]
+maxUploadSize = 500
+address = "0.0.0.0"
+headless = true

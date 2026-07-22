@@ -1,0 +1,85 @@
+# Snapshot prezzi: 2026-07-16.
+# Fonte: ricerca web incrociata (endpoint ufficiali openrouter.ai/api/v1/models e
+# ai.google.dev/gemini-api/docs/pricing non raggiungibili direttamente dall'ambiente
+# di sviluppo per policy di rete; dati verificati con query multiple indipendenti).
+# Cambio USD -> EUR usato per la conversione: 0.87 (snapshot 2026-07-16).
+# Da riverificare a ogni aggiornamento di questo file.
+
+pricing_snapshot_date: "2026-07-16"
+usd_eur_rate: 0.87
+
+# Modello fisso per lo step 1 (parsing video), non selezionabile dall'utente.
+step1_video_model: gemini-3.1-pro-preview
+
+models:
+  - id: anthropic/claude-haiku-4.5
+    label: "Claude Haiku 4.5 (economico)"
+    family: anthropic
+    backend: openrouter
+    price_input_eur_per_1m: 0.87
+    price_output_eur_per_1m: 4.35
+    native_file_input: true
+
+  - id: anthropic/claude-fable-5
+    label: "Claude Fable 5 (potente)"
+    family: anthropic
+    backend: openrouter
+    price_input_eur_per_1m: 8.70
+    price_output_eur_per_1m: 43.50
+    native_file_input: true
+
+  - id: anthropic/claude-sonnet-5
+    label: "Claude Sonnet 5 (qualità/prezzo)"
+    family: anthropic
+    backend: openrouter
+    price_input_eur_per_1m: 1.74
+    price_output_eur_per_1m: 8.70
+    native_file_input: true
+
+  - id: openai/gpt-5-mini
+    label: "GPT-5 Mini (economico)"
+    family: openai
+    backend: openrouter
+    price_input_eur_per_1m: 0.2175
+    price_output_eur_per_1m: 1.74
+    native_file_input: true
+
+  - id: openai/gpt-5.5
+    label: "GPT-5.5 (potente)"
+    family: openai
+    backend: openrouter
+    price_input_eur_per_1m: 4.35
+    price_output_eur_per_1m: 26.10
+    native_file_input: true
+
+  - id: openai/gpt-5.2
+    label: "GPT-5.2 (qualità/prezzo)"
+    family: openai
+    backend: openrouter
+    price_input_eur_per_1m: 1.5225
+    price_output_eur_per_1m: 12.18
+    native_file_input: true
+
+  - id: gemini-2.5-flash-lite
+    label: "Gemini 2.5 Flash Lite (economico)"
+    family: gemini
+    backend: gemini
+    price_input_eur_per_1m: 0.087
+    price_output_eur_per_1m: 0.348
+    native_file_input: true
+
+  - id: gemini-3.1-pro-preview
+    label: "Gemini 3.1 Pro (potente)"
+    family: gemini
+    backend: gemini
+    price_input_eur_per_1m: 1.74
+    price_output_eur_per_1m: 10.44
+    native_file_input: true
+
+  - id: gemini-3-flash-preview
+    label: "Gemini 3 Flash (qualità/prezzo)"
+    family: gemini
+    backend: gemini
+    price_input_eur_per_1m: 0.435
+    price_output_eur_per_1m: 2.61
+    native_file_input: true
