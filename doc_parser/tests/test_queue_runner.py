@@ -38,13 +38,19 @@ def _patch_providers(monkeypatch, by_model: dict[str, ScriptedProvider]) -> None
     monkeypatch.setattr("doc_parser.pipeline.core.get_provider_for_model", _fake)
 
 
-def _screencast_response(title: str = "Titolo") -> str:
+def _video_response(title: str = "Titolo") -> str:
     return json.dumps(
         {
             "title": title,
             "summary": "Sommario",
             "prerequisites": [],
-            "steps": [{"number": 1, "timestamp": "00:05", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}],
+            "procedures": [
+                {
+                    "id": "proc_001",
+                    "title": "P1",
+                    "steps": [{"number": 1, "timestamp": "00:05", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}],
+                }
+            ],
             "glossary": [],
             "notes": [],
         }
@@ -65,10 +71,10 @@ def _video_file(tmp_path: Path, name: str = "video.mp4") -> Path:
 def test_run_queue_processes_single_pass_gemini_run(monkeypatch, tmp_path, settings) -> None:
     video = _video_file(tmp_path)
     config = RunsConfig(
-        settings=GlobalSettings(content_type="screencast", model_id=GEMINI_LITE_MODEL, parallel_runs=2),
+        settings=GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL, parallel_runs=2),
         runs=[RunConfig(name="run1", inputs=[InputSource(source="file", path=str(video))])],
     )
-    provider = ScriptedProvider([(_screencast_response(), 100, 10)])
+    provider = ScriptedProvider([(_video_response(), 100, 10)])
     _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
 
     checkpoint = run_queue(config, settings, checkpoint_path=tmp_path / "checkpoint.json")
@@ -87,7 +93,7 @@ def test_run_queue_resumes_and_skips_completed(monkeypatch, tmp_path, settings) 
 
     video = _video_file(tmp_path)
     config = RunsConfig(
-        settings=GlobalSettings(content_type="screencast", model_id=GEMINI_LITE_MODEL),
+        settings=GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL),
         runs=[RunConfig(name="run1", inputs=[InputSource(source="file", path=str(video))])],
     )
     # nessun provider scriptato: se venisse chiamato il test fallirebbe con KeyError
@@ -99,7 +105,7 @@ def test_run_queue_resumes_and_skips_completed(monkeypatch, tmp_path, settings) 
 
 def test_run_queue_marks_failed_on_missing_file(monkeypatch, tmp_path, settings) -> None:
     config = RunsConfig(
-        settings=GlobalSettings(content_type="screencast", model_id=GEMINI_LITE_MODEL),
+        settings=GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL),
         runs=[RunConfig(name="run-assente", inputs=[InputSource(source="file", path=str(tmp_path / "assente.mp4"))])],
     )
     _patch_providers(monkeypatch, {})
@@ -113,10 +119,10 @@ def test_run_queue_marks_failed_on_missing_file(monkeypatch, tmp_path, settings)
 def test_run_queue_two_step_video_uses_fixed_step1_and_chosen_step2(monkeypatch, tmp_path, settings) -> None:
     video = _video_file(tmp_path)
     config = RunsConfig(
-        settings=GlobalSettings(content_type="screencast", model_id="anthropic/claude-haiku-4.5"),
+        settings=GlobalSettings(content_type="video", model_id="anthropic/claude-haiku-4.5"),
         runs=[RunConfig(name="run1", inputs=[InputSource(source="file", path=str(video))])],
     )
-    step1 = ScriptedProvider([(_screencast_response("Grezzo"), 100, 10)])
+    step1 = ScriptedProvider([(_video_response("Grezzo"), 100, 10)])
     rewritten = {
         "title": "Rifinito", "summary": "S", "prerequisites": [],
         "procedures": [{"id": "proc_001", "title": "P", "steps": [{"number": 1, "timestamp": "00:05", "title": "S1", "description": "d"}]}],
@@ -138,13 +144,13 @@ def test_run_queue_multiple_runs_in_parallel(monkeypatch, tmp_path, settings) ->
     video_a = _video_file(tmp_path, "a.mp4")
     video_b = _video_file(tmp_path, "b.mp4")
     config = RunsConfig(
-        settings=GlobalSettings(content_type="screencast", model_id=GEMINI_LITE_MODEL, parallel_runs=2),
+        settings=GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL, parallel_runs=2),
         runs=[
             RunConfig(name="run-a", inputs=[InputSource(source="file", path=str(video_a))]),
             RunConfig(name="run-b", inputs=[InputSource(source="file", path=str(video_b))]),
         ],
     )
-    provider = ScriptedProvider([(_screencast_response("A"), 10, 5), (_screencast_response("B"), 10, 5)])
+    provider = ScriptedProvider([(_video_response("A"), 10, 5), (_video_response("B"), 10, 5)])
     _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
 
     checkpoint = run_queue(config, settings, checkpoint_path=tmp_path / "checkpoint.json")

@@ -74,7 +74,7 @@ def main() -> None:
     parser.add_argument(
         "--urls-file", metavar="PATH", help="File .txt con un URL per riga (righe con # ignorate)"
     )
-    parser.add_argument("--content-type", default="screencast", choices=CONTENT_TYPES)
+    parser.add_argument("--content-type", default="video", choices=CONTENT_TYPES)
     parser.add_argument("--model", default="anthropic/claude-haiku-4.5", help="ID modello da models.yaml")
     parser.add_argument("--language", default="it", choices=["it", "en"])
     parser.add_argument("--output-mode", default="documentazione", choices=["documentazione", "kb_densa"])

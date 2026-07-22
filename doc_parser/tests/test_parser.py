@@ -53,7 +53,7 @@ def test_parse_screencast_empty_steps_raises() -> None:
         parse_response(raw, "screencast")
 
 
-def test_parse_webinar_with_procedures() -> None:
+def test_parse_video_with_procedures() -> None:
     raw = json.dumps(
         {
             "title": "T", "summary": "S", "prerequisites": [],
@@ -61,22 +61,22 @@ def test_parse_webinar_with_procedures() -> None:
             "glossary": [], "notes": [],
         }
     )
-    data = parse_response(raw, "webinar")
+    data = parse_response(raw, "video")
     assert data["procedures"][0]["id"] == "proc_001"
 
 
-def test_parse_webinar_normalizes_flat_steps() -> None:
-    data = parse_response(_screencast_json(), "webinar")
+def test_parse_video_normalizes_flat_steps() -> None:
+    data = parse_response(_screencast_json(), "video")
     assert data["procedures"][0]["id"] == "proc_001"
 
 
-def test_parse_webinar_empty_procedures_raises() -> None:
+def test_parse_video_empty_procedures_raises() -> None:
     raw = json.dumps({"title": "T", "summary": "S", "prerequisites": [], "procedures": [], "glossary": [], "notes": []})
     with pytest.raises(ValueError, match="almeno una procedura"):
-        parse_response(raw, "webinar")
+        parse_response(raw, "video")
 
 
-def test_parse_webinar_procedure_without_steps_raises() -> None:
+def test_parse_video_procedure_without_steps_raises() -> None:
     raw = json.dumps(
         {
             "title": "T", "summary": "S", "prerequisites": [],
@@ -85,31 +85,44 @@ def test_parse_webinar_procedure_without_steps_raises() -> None:
         }
     )
     with pytest.raises(ValueError, match="almeno uno step"):
-        parse_response(raw, "webinar")
+        parse_response(raw, "video")
 
 
-def test_parse_hybrid_keeps_concepts_and_procedures() -> None:
+def test_parse_manuale_keeps_concepts_and_procedures() -> None:
     raw = json.dumps(
         {
             "title": "T", "summary": "S", "prerequisites": [],
             "concepts": [{"id": "con_001", "title": "C1", "content": "...", "embedding_keywords": []}],
-            "procedures": [{"id": "proc_001", "title": "P1", "steps": [{"number": 1, "title": "S1", "description": "D", "notes": "", "source_timestamps": [], "embedding_keywords": []}]}],
+            "procedures": [{"id": "proc_001", "title": "P1", "steps": [{"number": 1, "title": "S1", "description": "D", "notes": "", "source_pages": [], "embedding_keywords": []}]}],
             "glossary": [], "notes": [],
         }
     )
-    data = parse_response(raw, "hybrid")
+    data = parse_response(raw, "manuale")
     assert len(data["concepts"]) == 1
     assert len(data["procedures"]) == 1
 
 
-def test_parse_hybrid_requires_at_least_one_concept_or_procedure() -> None:
+def test_parse_manuale_requires_at_least_one_concept_or_procedure() -> None:
     raw = json.dumps({"title": "T", "summary": "S", "prerequisites": [], "concepts": [], "procedures": [], "glossary": [], "notes": []})
     with pytest.raises(ValueError, match="almeno un concetto"):
-        parse_response(raw, "hybrid")
+        parse_response(raw, "manuale")
+
+
+def test_parse_manuale_normalizes_source_pages_to_list() -> None:
+    raw = json.dumps(
+        {
+            "title": "T", "summary": "S", "prerequisites": [],
+            "concepts": [],
+            "procedures": [{"id": "proc_001", "title": "P1", "steps": [{"number": 1, "title": "S1", "description": "D", "notes": "", "source_pages": "Pagina 3", "embedding_keywords": []}]}],
+            "glossary": [], "notes": [],
+        }
+    )
+    data = parse_response(raw, "manuale")
+    assert data["procedures"][0]["steps"][0]["source_pages"] == []
 
 
 def test_parse_doc_profile_uses_flat_steps_branch() -> None:
-    data = parse_response(_screencast_json(), "doc")
+    data = parse_response(_screencast_json(), "documento")
     assert data["procedures"][0]["steps"][0]["number"] == 1
 
 

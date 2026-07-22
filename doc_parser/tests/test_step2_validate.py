@@ -68,7 +68,7 @@ def test_step_count_mismatch_raises() -> None:
         validate_step2_output(_raw(), rewritten)
 
 
-def test_source_timestamps_must_match_for_webinar_hybrid() -> None:
+def test_source_timestamps_must_match_for_video() -> None:
     raw = {"procedures": [{"id": "proc_001", "steps": [{"number": 1, "source_timestamps": ["01:00", "02:00"]}]}]}
     rewritten = {"procedures": [{"id": "proc_001", "steps": [{"number": 1, "source_timestamps": ["01:00"]}]}]}
     with pytest.raises(Step2ValidationError):

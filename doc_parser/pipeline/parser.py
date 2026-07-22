@@ -14,7 +14,7 @@ _REQUIRED_KEYS: list[str] = [
     "prerequisites",
 ]
 
-_REQUIRED_KEYS_WEBINAR: list[str] = [
+_REQUIRED_KEYS_VIDEO: list[str] = [
     "title",
     "summary",
     "procedures",
@@ -23,7 +23,7 @@ _REQUIRED_KEYS_WEBINAR: list[str] = [
     "prerequisites",
 ]
 
-_REQUIRED_KEYS_HYBRID: list[str] = [
+_REQUIRED_KEYS_MANUALE: list[str] = [
     "title",
     "summary",
     "concepts",
@@ -68,7 +68,7 @@ def normalize_to_procedures(data: dict) -> dict:
     return data
 
 
-def parse_response(raw: str, content_type: str = "screencast") -> dict:
+def parse_response(raw: str, content_type: str = "documento") -> dict:
     """Converte l'output grezzo del modello in un dict di documentazione validato.
 
     Rimuove i code fence markdown, carica il JSON, valida le chiavi
@@ -85,10 +85,10 @@ def parse_response(raw: str, content_type: str = "screencast") -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON non valido nella risposta del modello: {exc}") from exc
 
-    if content_type == "webinar":
+    if content_type == "video":
         # Normalizza prima: il modello può rispondere con steps[] flat anche se richiesto procedures[]
         data = normalize_to_procedures(data)
-        missing = [k for k in _REQUIRED_KEYS_WEBINAR if k not in data]
+        missing = [k for k in _REQUIRED_KEYS_VIDEO if k not in data]
         if missing:
             raise ValueError(
                 f"Chiavi obbligatorie mancanti nella risposta: {', '.join(missing)}"
@@ -107,8 +107,8 @@ def parse_response(raw: str, content_type: str = "screencast") -> dict:
                     f"La procedura '{proc.get('id', '?')}' deve contenere almeno uno step."
                 )
 
-    elif content_type == "hybrid":
-        missing = [k for k in _REQUIRED_KEYS_HYBRID if k not in data]
+    elif content_type == "manuale":
+        missing = [k for k in _REQUIRED_KEYS_MANUALE if k not in data]
         if missing:
             raise ValueError(
                 f"Chiavi obbligatorie mancanti nella risposta: {', '.join(missing)}"
@@ -124,7 +124,7 @@ def parse_response(raw: str, content_type: str = "screencast") -> dict:
         if len(concepts) + len(procedures) == 0:
             preview = cleaned[:500].replace("\n", " ")
             raise ValueError(
-                f"La risposta hybrid deve contenere almeno un concetto o una procedura.\n"
+                f"La risposta manuale deve contenere almeno un concetto o una procedura.\n"
                 f"Risposta (primi 500 char): {preview}"
             )
         for con in data["concepts"]:
@@ -136,10 +136,12 @@ def parse_response(raw: str, content_type: str = "screencast") -> dict:
                     step["embedding_keywords"] = []
                 if "source_timestamps" in step and not isinstance(step["source_timestamps"], list):
                     step["source_timestamps"] = []
+                if "source_pages" in step and not isinstance(step["source_pages"], list):
+                    step["source_pages"] = []
         return data
 
     else:
-        # screencast / doc: valida il formato steps[] originale, poi normalizza
+        # screencast / documento: valida il formato steps[] originale, poi normalizza
         missing = [k for k in _REQUIRED_KEYS if k not in data]
         if missing:
             raise ValueError(
@@ -157,5 +159,7 @@ def parse_response(raw: str, content_type: str = "screencast") -> dict:
                 step["embedding_keywords"] = []
             if "source_timestamps" in step and not isinstance(step["source_timestamps"], list):
                 step["source_timestamps"] = []
+            if "source_pages" in step and not isinstance(step["source_pages"], list):
+                step["source_pages"] = []
 
     return data

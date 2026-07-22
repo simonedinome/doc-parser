@@ -42,7 +42,7 @@ from doc_parser.settings import Settings
 from doc_parser.storage.base import Repository
 from doc_parser.worker.processor import finalize_run
 
-_VIDEO_CONTENT_TYPES = {"screencast", "webinar", "hybrid"}
+_VIDEO_CONTENT_TYPES = {"video", "screencast"}
 
 
 def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
@@ -202,7 +202,7 @@ def _process_video(
     settings: Settings,
     input_files: list[tuple[str, bytes]],
 ) -> None:
-    content_type = run.content_type or "screencast"
+    content_type = run.content_type or "video"
     if content_type not in _VIDEO_CONTENT_TYPES:
         raise GuardrailRejection(f"Tipo di contenuto video non valido: {content_type!r}")
 
@@ -375,8 +375,14 @@ def _process_document(
         _process_kb_densa(run, repo, settings, attachments, extracted_text)
         return
 
+    content_type = run.content_type or "documento"
+    if content_type == "manuale":
+        for filename, _ in input_files:
+            if guardrails.classify_extension(filename) != "pdf":
+                raise GuardrailRejection("Il profilo 'manuale' accetta solo PDF")
+
     provider = get_provider_for_model(run.model_id, settings)
-    system_prompt, user_prompt_base = resolve_profile_prompts("doc")
+    system_prompt, user_prompt_base = resolve_profile_prompts(content_type)
     system_prompt = apply_language_directive(system_prompt, run.language)
 
     results: list[tuple[dict, str]] = []
@@ -407,7 +413,7 @@ def _process_document(
             raw_text, tokens_in, tokens_out = provider.generate(system_prompt, user_prompt, attachments)
             tokens_in_total += tokens_in
             tokens_out_total += tokens_out
-            results.append((parser.parse_response(raw_text, "doc"), filename))
+            results.append((parser.parse_response(raw_text, content_type), filename))
 
         merged = (
             merger.merge_run_results(results, run.input_filename or "run")
@@ -454,12 +460,12 @@ def _process_images(
         Attachment(data=data, mime_type=mime_type_for(filename), filename=filename)
         for filename, data in input_files
     ]
-    system_prompt, user_prompt = resolve_profile_prompts("doc")
+    system_prompt, user_prompt = resolve_profile_prompts("documento")
     system_prompt = apply_language_directive(system_prompt, run.language)
 
     provider = get_provider_for_model(run.model_id, settings)
     raw_text, tokens_in, tokens_out = provider.generate(system_prompt, user_prompt, attachments)
-    data_dict = parser.parse_response(raw_text, "doc")
+    data_dict = parser.parse_response(raw_text, "documento")
 
     source_filename = run.input_filename or input_files[0][0]
     _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out, source_filename, None)

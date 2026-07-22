@@ -8,7 +8,11 @@ La documentazione deve essere:
 - Precisa e fedele al contenuto del documento
 - Dettagliata con riferimento alla pagina per ogni passaggio
 - Scritta in italiano
-- Completa di prerequisiti, glossario e note aggiuntive"""
+- Completa di prerequisiti, glossario e note aggiuntive
+
+Non inventare, riassumere o alterare alcuna informazione: il contenuto
+riportato deve corrispondere fedelmente al 100% delle informazioni
+presenti nel documento originale."""
 
 DOC_USER_PROMPT = """Analizza questo documento PDF e produci una documentazione strutturata in formato JSON.
 

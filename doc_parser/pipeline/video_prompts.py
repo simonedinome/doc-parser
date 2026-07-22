@@ -1,11 +1,12 @@
-"""Prompt per la generazione di documentazione da webinar.
+"""Prompt per la generazione di documentazione da contenuto video procedurale,
+lungo o breve (ex webinar; copre sia webinar lunghi sia video brevi "pillole").
 
 ATTENZIONE: file protetto — non modificare senza approvazione esplicita.
 I prompt sono calibrati per l'output JSON strutturato atteso dal parser.
 """
 from __future__ import annotations
 
-WEBINAR_SYSTEM_PROMPT = """\
+VIDEO_SYSTEM_PROMPT = """\
 Sei un redattore tecnico specializzato nella trasformazione di contenuti di webinar \
 in manuali operativi professionali.
 
@@ -18,13 +19,24 @@ Regole assolute:
 - Usa i nomi esatti degli elementi UI visibili a schermo: nomi di pulsanti, voci di menu, \
 sezioni, label, etichette.
 - Se il relatore si ripete o si corregge, mantieni solo la versione corretta finale.
-- Ignora Q&A, digressioni non operative, saluti, battute, commenti informali.
+- Ignora digressioni non operative, saluti, battute, commenti informali privi
+  di valore informativo.
+- NON ignorare le sessioni di domande e risposte (Q&A): se contengono
+  informazioni rilevanti, riportale in forma sintetica (Domanda: ... /
+  Risposta: ...) nel campo "notes" generale del JSON, non come step o
+  procedura a sé stante.
 - Non creare step separati per azioni logicamente concatenate: \
 aprire un menu e cliccare una voce è un unico step.
+- Non inventare, riassumere in modo lossy o alterare il significato di quanto
+  detto nel video: ogni affermazione riportata deve corrispondere fedelmente
+  al contenuto originale.
+- Se il contenuto include tabelle mostrate a schermo, convertile in formato
+  chiave: valore all'interno di "description" o "notes"; non tentare di
+  riprodurre la struttura tabellare originale.
 """
 
-WEBINAR_USER_PROMPT = """\
-Analizza il webinar e produci documentazione operativa strutturata.
+VIDEO_USER_PROMPT = """\
+Analizza il video e produci documentazione operativa strutturata.
 
 Rispondi SOLO con il seguente JSON, senza testo prima o dopo, senza markdown:
 

@@ -95,14 +95,6 @@ h3 {
     font-size: 0.9rem;
     flex-shrink: 0;
 }
-.timestamp {
-    background: #e8f0fe;
-    color: #1a73e8;
-    padding: 0.15rem 0.6rem;
-    border-radius: 12px;
-    font-size: 0.85rem;
-    font-weight: 500;
-}
 .step img {
     max-width: 100%;
     border-radius: 6px;
@@ -158,7 +150,6 @@ h3 {
 
 def _render_step_folder(step: dict, proc_id: str, screenshot_map: dict[tuple[str, int], Path | None]) -> str:
     num = step["number"]
-    ts = step.get("timestamp", "") or (step.get("source_timestamps") or [""])[0]
     title = step.get("title", "")
     desc = step.get("description", "")
     note = step.get("notes", "")
@@ -167,13 +158,11 @@ def _render_step_folder(step: dict, proc_id: str, screenshot_map: dict[tuple[str
     if sc is not None:
         img_html = f'<img src="screenshots/{sc.name}" alt="Step {num}">'
     note_html = f'<div class="notes">{note}</div>' if note else ""
-    ts_html = f'<span class="timestamp">{ts}</span>' if ts else ""
     return f"""
 <div class="step">
   <div class="step-header">
     <div class="step-number">{num}</div>
     <h3>{title}</h3>
-    {ts_html}
   </div>
   <p>{desc}</p>
   {img_html}
@@ -183,7 +172,6 @@ def _render_step_folder(step: dict, proc_id: str, screenshot_map: dict[tuple[str
 
 def _render_step_standalone(step: dict, proc_id: str, screenshot_map: dict[tuple[str, int], Path | None]) -> str:
     num = step["number"]
-    ts = step.get("timestamp", "") or (step.get("source_timestamps") or [""])[0]
     title = step.get("title", "")
     desc = step.get("description", "")
     note = step.get("notes", "")
@@ -193,13 +181,11 @@ def _render_step_standalone(step: dict, proc_id: str, screenshot_map: dict[tuple
         b64 = base64.b64encode(sc.read_bytes()).decode()
         img_html = f'<img src="data:image/png;base64,{b64}" alt="Step {num}">'
     note_html = f'<div class="notes">{note}</div>' if note else ""
-    ts_html = f'<span class="timestamp">{ts}</span>' if ts else ""
     return f"""
 <div class="step">
   <div class="step-header">
     <div class="step-number">{num}</div>
     <h3>{title}</h3>
-    {ts_html}
   </div>
   <p>{desc}</p>
   {img_html}

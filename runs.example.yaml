@@ -8,8 +8,8 @@
 #   - runs: lista di run da eseguire
 
 settings:
-  # Tipo di contenuto predefinito: screencast | webinar | hybrid | doc
-  content_type: screencast
+  # Tipo di contenuto predefinito: documento | manuale | video | screencast (legacy)
+  content_type: video
 
   # ID modello da models.yaml (usato per lo step 2 video, o per il percorso
   # single-step dei formati non video). Lo step 1 video resta sempre il
@@ -52,7 +52,7 @@ runs:
       - source: url        # "url" = scaricato automaticamente prima dell'elaborazione
         url: https://example.com/video/deploy.mp4
     settings:
-      content_type: webinar
+      content_type: video
       model_id: openai/gpt-5.2
       output_artifacts: html_standalone,html_folder,procedura,glossario,rag_chunks
 
@@ -62,5 +62,5 @@ runs:
       - source: file
         path: input/manuale.pdf
     settings:
-      content_type: doc
+      content_type: documento
       output_mode: kb_densa

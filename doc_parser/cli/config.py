@@ -37,7 +37,7 @@ class RunConfig:
 
 @dataclass
 class GlobalSettings:
-    content_type: str = "screencast"
+    content_type: str = "video"
     model_id: str = "anthropic/claude-haiku-4.5"
     language: str = "it"
     output_mode: str = "documentazione"
@@ -69,7 +69,7 @@ def load_runs_config(path: Path) -> RunsConfig:
 
     raw_settings = raw.get("settings", {}) or {}
     global_settings = GlobalSettings(
-        content_type=raw_settings.get("content_type", "screencast"),
+        content_type=raw_settings.get("content_type", "video"),
         model_id=raw_settings.get("model_id", "anthropic/claude-haiku-4.5"),
         language=raw_settings.get("language", "it"),
         output_mode=raw_settings.get("output_mode", "documentazione"),

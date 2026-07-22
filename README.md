@@ -50,10 +50,10 @@ stesso `models.yaml`.
 
 ```bash
 # Batch su cartella: un export per file, in parallelo
-python -m doc_parser.cli --input-dir ./input --content-type doc --model anthropic/claude-haiku-4.5
+python -m doc_parser.cli --input-dir ./input --content-type documento --model anthropic/claude-haiku-4.5
 
 # Batch da lista URL (un URL per riga, righe con # ignorate)
-python -m doc_parser.cli --urls-file urls.txt --content-type screencast
+python -m doc_parser.cli --urls-file urls.txt --content-type video
 
 # Coda YAML: run con parametri diversi, merge multi-video, resume automatico
 python -m doc_parser.cli --runs-file runs.yaml

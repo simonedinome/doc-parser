@@ -16,7 +16,7 @@ def test_load_runs_config_defaults_and_overrides(tmp_path: Path) -> None:
     path = _write_yaml(
         tmp_path,
         {
-            "settings": {"content_type": "webinar", "model_id": "openai/gpt-5.2", "parallel_runs": 5},
+            "settings": {"content_type": "video", "model_id": "openai/gpt-5.2", "parallel_runs": 5},
             "runs": [
                 {
                     "name": "run1",
@@ -25,13 +25,13 @@ def test_load_runs_config_defaults_and_overrides(tmp_path: Path) -> None:
                 {
                     "name": "run2",
                     "inputs": [{"source": "url", "url": "https://example.com/v.mp4"}],
-                    "settings": {"content_type": "doc", "output_mode": "kb_densa"},
+                    "settings": {"content_type": "documento", "output_mode": "kb_densa"},
                 },
             ],
         },
     )
     config = load_runs_config(path)
-    assert config.settings.content_type == "webinar"
+    assert config.settings.content_type == "video"
     assert config.settings.model_id == "openai/gpt-5.2"
     assert config.settings.parallel_runs == 5
     assert len(config.runs) == 2
@@ -40,7 +40,7 @@ def test_load_runs_config_defaults_and_overrides(tmp_path: Path) -> None:
     assert [i.path for i in run1.inputs] == ["b.mp4", "a.mp4"]  # ordinati per 'order'
 
     run2 = config.runs[1]
-    assert run2.settings.content_type == "doc"
+    assert run2.settings.content_type == "documento"
     assert run2.settings.output_mode == "kb_densa"
 
 
@@ -85,7 +85,7 @@ def test_load_runs_config_accepts_legacy_videos_key(tmp_path: Path) -> None:
 
 def test_resolve_run_settings_merges_with_global_fallback() -> None:
     global_settings = GlobalSettings(
-        content_type="screencast",
+        content_type="video",
         model_id="m1",
         language="it",
         output_mode="documentazione",
@@ -94,4 +94,4 @@ def test_resolve_run_settings_merges_with_global_fallback() -> None:
     run_settings = RunSettings(model_id="m2")
     effective = resolve_run_settings(global_settings, run_settings)
     assert effective["model_id"] == "m2"
-    assert effective["content_type"] == "screencast"
+    assert effective["content_type"] == "video"

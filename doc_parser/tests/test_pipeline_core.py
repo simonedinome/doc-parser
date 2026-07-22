@@ -50,7 +50,7 @@ def repo(settings: Settings) -> SqliteRepository:
     return SqliteRepository(data_dir=settings.data_dir)
 
 
-def _screencast_response(steps: list[dict], title: str = "Titolo") -> str:
+def _flat_steps_response(steps: list[dict], title: str = "Titolo") -> str:
     return json.dumps(
         {
             "title": title,
@@ -87,7 +87,7 @@ def _video_run(
 def test_video_two_step_rewrite(monkeypatch, repo, settings) -> None:
     run = _video_run(repo, OPENROUTER_MODEL)
     steps = [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
-    step1 = ScriptedProvider([(_screencast_response(steps), 1000, 200)])
+    step1 = ScriptedProvider([(_flat_steps_response(steps), 1000, 200)])
     # Lo step 2 riceve e restituisce il JSON già normalizzato a procedures[] (non lo
     # schema flat del profilo originale): stesso "id"/"number"/"timestamp", prosa riscritta.
     rewritten = {
@@ -151,7 +151,7 @@ def test_video_two_step_rewrite(monkeypatch, repo, settings) -> None:
 def test_video_folder_html_mode_includes_screenshots_and_english_labels(monkeypatch, repo, settings) -> None:
     run = _video_run(repo, GEMINI_LITE_MODEL, language="en", output_artifacts="html_folder,procedura,glossario,rag_chunks")
     steps = [{"number": 1, "timestamp": "00:01", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
-    provider = ScriptedProvider([(_screencast_response(steps), 100, 10)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 100, 10)])
     _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
 
     def _fake_ffmpeg_run(cmd, **kwargs):
@@ -180,7 +180,7 @@ def test_video_folder_html_mode_includes_screenshots_and_english_labels(monkeypa
 def test_video_single_pass_gemini_skips_step2(monkeypatch, repo, settings) -> None:
     run = _video_run(repo, GEMINI_LITE_MODEL)
     steps = [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
-    chosen_gemini = ScriptedProvider([(_screencast_response(steps), 800, 150)])
+    chosen_gemini = ScriptedProvider([(_flat_steps_response(steps), 800, 150)])
     fixed_step1_default = ScriptedProvider([])  # non deve mai essere chiamato
     _patch_providers(monkeypatch, {STEP1_MODEL: fixed_step1_default, GEMINI_LITE_MODEL: chosen_gemini})
 
@@ -211,7 +211,7 @@ def test_video_multi_file_merge(monkeypatch, repo, settings) -> None:
     steps_a = [{"number": 1, "timestamp": "00:10", "title": "A1", "description": "d", "notes": "", "embedding_keywords": []}]
     steps_b = [{"number": 1, "timestamp": "00:05", "title": "B1", "description": "d", "notes": "", "embedding_keywords": []}]
     provider = ScriptedProvider(
-        [(_screencast_response(steps_a, title="Video A"), 100, 10), (_screencast_response(steps_b, title="Video B"), 100, 10)]
+        [(_flat_steps_response(steps_a, title="Video A"), 100, 10), (_flat_steps_response(steps_b, title="Video B"), 100, 10)]
     )
     _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
 
@@ -228,9 +228,9 @@ def test_video_multi_file_merge(monkeypatch, repo, settings) -> None:
 def test_step2_validation_failure_marks_failed_and_keeps_raw(monkeypatch, repo, settings) -> None:
     run = _video_run(repo, OPENROUTER_MODEL)
     steps = [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
-    step1 = ScriptedProvider([(_screencast_response(steps), 100, 10)])
+    step1 = ScriptedProvider([(_flat_steps_response(steps), 100, 10)])
     bad_steps = [{"number": 99, "timestamp": "99:99", "title": "Violazione", "description": "d", "notes": "", "embedding_keywords": []}]
-    bad_response = _screencast_response(bad_steps)
+    bad_response = _flat_steps_response(bad_steps)
     step2 = ScriptedProvider([(bad_response, 10, 10)] * (settings.retry_max_attempts + 1))
     _patch_providers(monkeypatch, {STEP1_MODEL: step1, OPENROUTER_MODEL: step2})
 
@@ -251,11 +251,12 @@ def _document_run(
     model_id: str,
     output_mode: str = "documentazione",
     output_artifacts: str = "html_standalone,procedura,glossario,rag_chunks",
+    content_type: str | None = None,
 ) -> RunRecord:
     run = RunRecord(
         session_id="s1", requester_upn="utente@demo.local", input_filename=filename,
         input_type=input_type, model_id=model_id, output_mode=output_mode,
-        output_artifacts=output_artifacts,
+        output_artifacts=output_artifacts, content_type=content_type,
     )
     run.input_path = repo.save_input_file(run.run_id, filename, data)
     return repo.create_run(run)
@@ -275,7 +276,7 @@ def _sample_pdf_bytes(pages: int = 1) -> bytes:
 def test_document_pdf_single_step(monkeypatch, repo, settings) -> None:
     run = _document_run(repo, "manuale.pdf", _sample_pdf_bytes(), "pdf", OPENROUTER_MODEL)
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
-    provider = ScriptedProvider([(_screencast_response(steps), 400, 100)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 400, 100)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
     process_run(run, repo, settings)
@@ -309,7 +310,7 @@ def test_document_docx_uses_local_extraction_no_attachment(monkeypatch, repo, se
 
     run = _document_run(repo, "relazione.docx", buffer.getvalue(), "docx", OPENROUTER_MODEL)
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
-    provider = ScriptedProvider([(_screencast_response(steps), 200, 50)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 200, 50)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
     process_run(run, repo, settings)
@@ -333,7 +334,7 @@ def test_images_multiple_become_single_document(monkeypatch, repo, settings) -> 
     repo.create_run(run)
 
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
-    provider = ScriptedProvider([(_screencast_response(steps), 300, 80)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 300, 80)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
     process_run(run, repo, settings)
@@ -366,7 +367,7 @@ def test_document_multi_file_group_merge(monkeypatch, repo, settings) -> None:
     steps_a = [{"number": 1, "timestamp": "Pagina 1", "title": "A1", "description": "d", "notes": "", "embedding_keywords": []}]
     steps_b = [{"number": 1, "timestamp": "Pagina 1", "title": "B1", "description": "d", "notes": "", "embedding_keywords": []}]
     provider = ScriptedProvider(
-        [(_screencast_response(steps_a, title="Doc A"), 100, 10), (_screencast_response(steps_b, title="Doc B"), 100, 10)]
+        [(_flat_steps_response(steps_a, title="Doc A"), 100, 10), (_flat_steps_response(steps_b, title="Doc B"), 100, 10)]
     )
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
@@ -386,7 +387,7 @@ def test_document_output_artifacts_selection_filters_zip_contents(monkeypatch, r
         output_artifacts="procedura,rag_chunks",
     )
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
-    provider = ScriptedProvider([(_screencast_response(steps), 400, 100)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 400, 100)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
     process_run(run, repo, settings)
@@ -396,6 +397,54 @@ def test_document_output_artifacts_selection_filters_zip_contents(monkeypatch, r
     zip_bytes = repo.get_file(updated.zip_ref)
     names = set(zipfile.ZipFile(io.BytesIO(zip_bytes)).namelist())
     assert names == {"procedura.txt", "rag_chunks.jsonl", "log.txt"}
+
+
+def test_manuale_profile_rejects_non_pdf_input(monkeypatch, repo, settings) -> None:
+    from doc_parser.core.errors import GuardrailRejection
+
+    import io
+
+    from docx import Document
+
+    document = Document()
+    document.add_paragraph("Contenuto docx")
+    buffer = io.BytesIO()
+    document.save(buffer)
+
+    run = _document_run(
+        repo, "manuale.docx", buffer.getvalue(), "docx", OPENROUTER_MODEL, content_type="manuale"
+    )
+    _patch_providers(monkeypatch, {})  # non deve mai essere chiamato
+
+    with pytest.raises(GuardrailRejection, match="'manuale' accetta solo PDF"):
+        process_run(run, repo, settings)
+
+
+def test_documento_and_manuale_runs_on_same_pdf_are_not_deduped(monkeypatch, repo, settings) -> None:
+    pdf_bytes = _sample_pdf_bytes()
+    flat_steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
+    manuale_response = json.dumps(
+        {
+            "title": "T", "summary": "S", "prerequisites": [],
+            "concepts": [{"id": "con_001", "title": "C1", "content": "...", "embedding_keywords": []}],
+            "procedures": [],
+            "glossary": [], "notes": [],
+        }
+    )
+    provider = ScriptedProvider([(_flat_steps_response(flat_steps), 100, 20), (manuale_response, 100, 20)])
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
+
+    first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL, content_type="documento")
+    process_run(first, repo, settings)
+    first = repo.get_run(first.run_id)
+    assert first.status == RunStatus.DONE
+
+    second = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL, content_type="manuale")
+    process_run(second, repo, settings)
+    second = repo.get_run(second.run_id)
+
+    assert second.status == RunStatus.DONE  # non DUPLICATE: content_type diverso
+    assert len(provider.calls) == 2  # entrambe le run hanno chiamato l'LLM
 
 
 def test_kb_densa_output_mode(monkeypatch, repo, settings) -> None:
@@ -495,7 +544,7 @@ def test_missing_input_raises_guardrail(repo, settings) -> None:
 def test_dedup_reuses_output_for_identical_file_and_config(monkeypatch, repo, settings) -> None:
     pdf_bytes = _sample_pdf_bytes()
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
-    provider = ScriptedProvider([(_screencast_response(steps), 100, 20)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 100, 20)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
     first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL)
@@ -518,8 +567,8 @@ def test_dedup_reuses_output_for_identical_file_and_config(monkeypatch, repo, se
 def test_dedup_does_not_trigger_for_different_model(monkeypatch, repo, settings) -> None:
     pdf_bytes = _sample_pdf_bytes()
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
-    provider_a = ScriptedProvider([(_screencast_response(steps), 100, 20)])
-    provider_b = ScriptedProvider([(_screencast_response(steps), 100, 20)])
+    provider_a = ScriptedProvider([(_flat_steps_response(steps), 100, 20)])
+    provider_b = ScriptedProvider([(_flat_steps_response(steps), 100, 20)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider_a, GEMINI_LITE_MODEL: provider_b})
 
     first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL)
@@ -538,7 +587,7 @@ def test_dedup_does_not_trigger_for_different_output_mode(monkeypatch, repo, set
     pdf_bytes = _sample_pdf_bytes()
     steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
     chunks_response = json.dumps({"chunks": [{"index": 1, "title": "T", "text": "Testo.", "has_uncertainty": False}]})
-    provider = ScriptedProvider([(_screencast_response(steps), 100, 20), (chunks_response, 50, 10)])
+    provider = ScriptedProvider([(_flat_steps_response(steps), 100, 20), (chunks_response, 50, 10)])
     _patch_providers(monkeypatch, {OPENROUTER_MODEL: provider})
 
     first = _document_run(repo, "manuale.pdf", pdf_bytes, "pdf", OPENROUTER_MODEL, output_mode="documentazione")

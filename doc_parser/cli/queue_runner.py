@@ -21,7 +21,7 @@ from doc_parser.worker.processor import Worker
 
 logger = logging.getLogger(__name__)
 
-_VIDEO_CONTENT_TYPES = {"screencast", "webinar", "hybrid"}
+_VIDEO_CONTENT_TYPES = {"video", "screencast"}
 _checkpoint_lock = threading.Lock()
 
 
@@ -81,7 +81,7 @@ def _process_run_config(
             requester_upn=global_settings.requester_upn,
             input_filename=input_filename,
             input_type=input_type,
-            content_type=effective["content_type"] if is_video else None,
+            content_type=effective["content_type"],
             output_mode=effective["output_mode"],
             output_artifacts=effective["output_artifacts"],
             language=effective["language"],

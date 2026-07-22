@@ -22,7 +22,7 @@ from doc_parser.ui.context import get_app_context
 from doc_parser.ui.format import ACTIVE, badge, download_filename, fmt_dt
 
 _LANGUAGE_LABELS = {"it": "Italiano", "en": "English"}
-_VIDEO_CONTENT_TYPE = "hybrid"
+_CONTENT_TYPE_LABELS = {"Documento": "documento", "Manuale": "manuale", "Video": "video"}
 _ARTIFACT_OPTIONS = [
     ("html_standalone", "Documentazione HTML standalone (un file, immagini incorporate)"),
     ("html_folder", "Documentazione HTML con cartella (screenshot separati)"),
@@ -46,7 +46,8 @@ def render() -> None:
         "ritrovare la run in «Le mie richieste»."
     )
 
-    content_choice = st.selectbox("Tipo di contenuto", ["Documento", "Video"])
+    content_choice = st.selectbox("Tipo di contenuto", list(_CONTENT_TYPE_LABELS))
+    content_type = _CONTENT_TYPE_LABELS[content_choice]
     is_video = content_choice == "Video"
 
     uploaded = st.file_uploader("File", accept_multiple_files=True)
@@ -88,6 +89,7 @@ def render() -> None:
                 auth.get_session_id(),
                 uploaded or [],
                 url_text,
+                content_type,
                 is_video,
                 process_as_group,
                 model_id,
@@ -108,6 +110,7 @@ def _submit(
     session_id: str,
     uploaded,
     url_text: str,
+    content_type: str,
     is_video: bool,
     process_as_group: bool,
     model_id: str,
@@ -154,7 +157,7 @@ def _submit(
             requester_upn=user.upn,
             input_filename=group[0][0] if len(group) == 1 else f"{len(group)} file",
             input_type=input_type,
-            content_type=_VIDEO_CONTENT_TYPE if is_video else None,
+            content_type=content_type,
             output_mode="documentazione",
             output_artifacts=output_artifacts_csv,
             language=language,

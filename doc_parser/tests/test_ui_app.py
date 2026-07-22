@@ -100,8 +100,8 @@ def test_elabora_page_renders_all_options(app_env) -> None:
     assert any("RAG" in label for label in checkbox_labels)
 
 
-def test_elabora_page_content_type_has_only_document_and_video(app_env) -> None:
+def test_elabora_page_content_type_has_documento_manuale_video(app_env) -> None:
     at = AppTest.from_file(_APP_PATH, default_timeout=30).run()
     at = _login(at, "utente@demo.local", "demo123!")
     content_type_box = next(sb for sb in at.selectbox if sb.label == "Tipo di contenuto")
-    assert content_type_box.options == ["Documento", "Video"]
+    assert content_type_box.options == ["Documento", "Manuale", "Video"]
