@@ -14,7 +14,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from doc_parser.ui.context import get_app_context
-from doc_parser.ui.views import elabora, le_mie_richieste, log, log_tecnico
+from doc_parser.ui.views import elabora, guida, le_mie_richieste, log, log_tecnico
 
 
 def main() -> None:
@@ -42,6 +42,7 @@ def main() -> None:
             url_path="le-mie-richieste",
         ),
         st.Page(log.render, title="Log", icon="🗂️", url_path="log"),
+        st.Page(guida.render, title="Guida", icon="❓", url_path="guida"),
     ]
     if user.is_admin:
         pages.append(
