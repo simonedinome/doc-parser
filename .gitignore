@@ -217,3 +217,16 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 _source/
+
+# doc-parser: dati runtime e artefatti
+/output/
+/data/
+users.yaml
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+/screenshots/
+runs_checkpoint.json
+processed.json

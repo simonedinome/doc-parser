@@ -1,0 +1,19 @@
+# Utenti demo. Copia questo file in users.yaml (users.yaml è in .gitignore).
+#
+# Password di esempio (SOLO per la demo locale):
+#   admin@demo.local  -> admin123!
+#   utente@demo.local -> demo123!
+#
+# Per generare un nuovo hash:
+#   python -c "import bcrypt; print(bcrypt.hashpw(b'nuova-password', bcrypt.gensalt()).decode())"
+
+users:
+  - upn: admin@demo.local
+    display_name: Admin Demo
+    role: admin
+    password_hash: "$2b$12$PVCS4hW9UcWgs8m1eZKBUeqjw0owk1xEk2xdB/AjElIp24B/s6YnG"
+
+  - upn: utente@demo.local
+    display_name: Utente Demo
+    role: user
+    password_hash: "$2b$12$B2JSsurMdvuyLkVvfG288.MqlKUKgmNXDluQJkyICiXjNitkhOYq."

@@ -1,0 +1,66 @@
+# runs.example.yaml — Esempio di coda YAML per la CLI di doc-parser
+#
+# Uso:
+#   python -m doc_parser.cli --runs-file runs.yaml
+#
+# Il file ha due sezioni:
+#   - settings: impostazioni globali applicate a tutte le run (salvo override)
+#   - runs: lista di run da eseguire
+
+settings:
+  # Tipo di contenuto predefinito: documento | manuale | video | screencast (legacy)
+  content_type: video
+
+  # ID modello da models.yaml (usato per lo step 2 video, o per il percorso
+  # single-step dei formati non video). Lo step 1 video resta sempre il
+  # modello fisso di config, salvo quando questo stesso modello è un Gemini:
+  # in quel caso lo step 2 è saltato e si usa direttamente questo modello.
+  model_id: anthropic/claude-haiku-4.5
+
+  # Lingua dell'output: it | en
+  language: it
+
+  # Modalità output: documentazione | kb_densa (kb_densa solo per input non video)
+  output_mode: documentazione
+
+  # File da avere in output, separati da virgola: html_standalone | html_folder |
+  # procedura | glossario | rag_chunks
+  output_artifacts: html_standalone,procedura,glossario,rag_chunks
+
+  # Numero massimo di run eseguite in parallelo
+  parallel_runs: 3
+
+  # requester_upn associato alle run create da questa coda (per i log)
+  requester_upn: cli@local
+
+runs:
+  # Esempio 1 — video locali multipli, uniti in un unico export (merge
+  # implicito quando una run ha più di un input video)
+  - name: onboarding-crm
+    inputs:
+      - source: file       # "file" = locale
+        order: 1           # ordine di merge, crescente
+        path: input/parte1.mp4
+      - source: file
+        order: 2
+        path: input/parte2.mp4
+    # nessun override: usa le impostazioni globali
+
+  # Esempio 2 — video da URL remoto, con override per-run
+  - name: tutorial-deploy
+    inputs:
+      - source: url        # "url" = scaricato automaticamente prima dell'elaborazione
+        url: https://example.com/video/deploy.mp4
+    settings:
+      content_type: video
+      model_id: openai/gpt-5.2
+      output_artifacts: html_standalone,html_folder,procedura,glossario,rag_chunks
+
+  # Esempio 3 — documento singolo (non video), modalità KB densa
+  - name: manuale-prodotto
+    inputs:
+      - source: file
+        path: input/manuale.pdf
+    settings:
+      content_type: documento
+      output_mode: kb_densa
