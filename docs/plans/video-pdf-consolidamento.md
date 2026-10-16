@@ -218,7 +218,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
       3. la pillola viene usata per ultima;
       4. un'estrazione fallita passa al candidato successivo;
       5. l'HTML contiene due immagini quando ci sono entrambe.
-9. [ ] Task 9 — Step 2 e Rielabora con provenienza · 45 min · dipende da: 7
+9. [x] Task 9 — Step 2 e Rielabora con provenienza · 45 min · dipende da: 7
    1. In `_run_step2` di `pipeline/core.py`, prima della chiamata si tolgono:
       1. a livello di step e concetto: `sources`, `source_slides`, `merged_from` e `slides`;
       2. al top level: `source_inputs` e `consolidation_log`. Dopo la validazione si riattaccano per ID e numero. Copre anche Rielabora.

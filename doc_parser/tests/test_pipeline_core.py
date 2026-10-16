@@ -599,3 +599,26 @@ def test_dedup_does_not_trigger_for_different_output_mode(monkeypatch, repo, set
 
     assert second.status == RunStatus.DONE
     assert len(provider.calls) == 2
+
+
+def test_step2_retry_resends_raw_json_with_feedback(monkeypatch, repo, settings) -> None:
+    run = _video_run(repo, OPENROUTER_MODEL)
+    steps = [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
+    step1 = ScriptedProvider([(_flat_steps_response(steps), 100, 10)])
+    bad = _flat_steps_response([{"number": 99, "timestamp": "99:99", "title": "X", "description": "d"}])
+    good = {
+        "title": "Rifinito", "summary": "S", "prerequisites": [], "glossary": [], "notes": [],
+        "procedures": [{"id": "proc_001", "title": "Titolo", "steps": [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1 meglio"}]}],
+    }
+    step2 = ScriptedProvider([(bad, 10, 10), (json.dumps(good), 10, 10)])
+    _patch_providers(monkeypatch, {STEP1_MODEL: step1, OPENROUTER_MODEL: step2})
+
+    process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    assert updated.status == RunStatus.DONE
+    assert updated.retry_count == 1
+    retry_prompt = step2.calls[1][1]
+    assert retry_prompt.startswith("Ecco il JSON grezzo da rifinire:")
+    assert '"timestamp": "00:10"' in retry_prompt  # il JSON grezzo viaggia di nuovo
+    assert "ha violato il vincolo" in retry_prompt

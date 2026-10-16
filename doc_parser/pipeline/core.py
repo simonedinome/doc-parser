@@ -13,6 +13,7 @@ modalità "KB densa" il TXT a chunk assemblato da doc_parser.core.assembler.
 
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 from pathlib import Path
@@ -45,6 +46,8 @@ from doc_parser.storage.base import Repository
 from doc_parser.worker.processor import finalize_run
 
 _VIDEO_CONTENT_TYPES = {"video", "screencast"}
+_ITEM_PROVENANCE_KEYS = ("sources", "source_slides", "merged_from", "slides")
+_TOP_LEVEL_PROVENANCE_KEYS = ("source_inputs", "consolidation_log")
 
 
 def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
@@ -546,14 +549,19 @@ def _run_step2(
 ) -> tuple[dict, int, int, int]:
     """Esegue lo step 2 con retry-con-feedback in caso di violazione del vincolo.
 
+    La provenienza del JSON consolidato viene tolta prima della chiamata e
+    riattaccata dopo la validazione (vale anche per Rielabora).
+
     Ritorna (dati_riscritti, tokens_in_totali, tokens_out_totali, retry_count).
     Solleva Step2ValidationError se il vincolo è violato anche dopo i retry
     (la run viene marcata FAILED dal worker; il grezzo resta persistito).
     """
     provider = get_provider_for_model(run.model_id, settings)
     system_prompt = apply_language_directive(STEP2_SYSTEM_PROMPT, run.language)
-    raw_json_str = json.dumps(raw_data, ensure_ascii=False, indent=2)
-    user_prompt = STEP2_USER_PROMPT_TEMPLATE.format(raw_json=raw_json_str)
+    stripped, provenance = _split_provenance(raw_data)
+    raw_json_str = json.dumps(stripped, ensure_ascii=False, indent=2)
+    base_prompt = STEP2_USER_PROMPT_TEMPLATE.format(raw_json=raw_json_str)
+    user_prompt = base_prompt
 
     tokens_in_total = tokens_out_total = 0
     last_error: Exception | None = None
@@ -564,15 +572,49 @@ def _run_step2(
         tokens_out_total += tokens_out
         try:
             rewritten = parser.load_json_response(raw_text)
-            validate_step2_output(raw_data, rewritten)
-            return rewritten, tokens_in_total, tokens_out_total, attempt
+            validate_step2_output(stripped, rewritten)
+            return _attach_provenance(rewritten, provenance), tokens_in_total, tokens_out_total, attempt
         except (ValueError, Step2ValidationError) as exc:
             last_error = exc
-            user_prompt = STEP2_RETRY_FEEDBACK_TEMPLATE.format(violation=str(exc))
+            # Il provider è single-turn: il retry rimanda il JSON grezzo insieme al feedback.
+            user_prompt = f"{base_prompt}\n\n{STEP2_RETRY_FEEDBACK_TEMPLATE.format(violation=str(exc))}"
 
     raise Step2ValidationError(
         f"Lo step 2 non ha rispettato il vincolo ID/timestamp dopo {max_attempts} tentativi: {last_error}"
     )
+
+
+def _split_provenance(data: dict) -> tuple[dict, dict]:
+    """Toglie la provenienza calcolata dal codice (fonti, slide, riferimenti,
+    log del consolidamento) prima dello step 2, che non deve né vederla né
+    poterla alterare. Ritorna (json_senza_provenienza, provenienza)."""
+    stripped = copy.deepcopy(data)
+    provenance: dict = {"top": {}, "steps": {}, "concepts": {}}
+    for key in _TOP_LEVEL_PROVENANCE_KEYS:
+        if key in stripped:
+            provenance["top"][key] = stripped.pop(key)
+    for proc in stripped.get("procedures", []) or []:
+        for step in proc.get("steps", []) or []:
+            fields = {key: step.pop(key) for key in _ITEM_PROVENANCE_KEYS if key in step}
+            if fields:
+                provenance["steps"][(proc.get("id"), step.get("number"))] = fields
+    for con in stripped.get("concepts", []) or []:
+        fields = {key: con.pop(key) for key in _ITEM_PROVENANCE_KEYS if key in con}
+        if fields:
+            provenance["concepts"][con.get("id")] = fields
+    return stripped, provenance
+
+
+def _attach_provenance(data: dict, provenance: dict) -> dict:
+    """Riattacca la provenienza per ID di procedura/concetto e numero di step
+    (lo step 2 li preserva per vincolo, verificato da validate_step2_output)."""
+    data.update(provenance["top"])
+    for proc in data.get("procedures", []) or []:
+        for step in proc.get("steps", []) or []:
+            step.update(provenance["steps"].get((proc.get("id"), step.get("number")), {}))
+    for con in data.get("concepts", []) or []:
+        con.update(provenance["concepts"].get(con.get("id"), {}))
+    return data
 
 
 # --- Percorso non-video (single-step) ---

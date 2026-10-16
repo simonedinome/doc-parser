@@ -321,3 +321,55 @@ def test_images_fall_back_to_slides_and_reach_the_zip(monkeypatch, repo, setting
     assert "screenshots/proc_001_step_002.png" not in names  # nessuna slide e nessun fotogramma
     html = zf.read("documentazione.html").decode("utf-8")
     assert 'src="screenshots/con_001_slide.png"' in html
+
+
+def _run_consolidated(monkeypatch, repo, settings, output_artifacts="html_folder"):
+    run = consolidated_run(repo, OPENROUTER_MODEL, output_artifacts=output_artifacts)
+    chosen = FnProvider([consolidation_response(), step2_echo()])
+    patch_providers(monkeypatch, {STEP1_MODEL: FnProvider([WEBINAR_STEP1, PILLOLA_STEP1]), OPENROUTER_MODEL: chosen})
+    process_run(run, repo, settings)
+    return repo.get_run(run.run_id), chosen
+
+
+def test_step2_prompt_has_no_provenance(monkeypatch, repo, settings) -> None:
+    _, chosen = _run_consolidated(monkeypatch, repo, settings)
+    step2_prompt = chosen.calls[1][1]
+    for key in ("merged_from", "consolidation_log", "source_inputs", '"sources"', "source_slides"):
+        assert key not in step2_prompt
+
+
+def test_final_json_has_provenance_reattached(monkeypatch, repo, settings) -> None:
+    updated, _ = _run_consolidated(monkeypatch, repo, settings)
+    final = json.loads(repo.get_file(updated.final_json_ref))
+    raw = json.loads(repo.get_file(updated.raw_json_ref))
+    assert final["title"] == "Manuale rifinito"
+    assert final["consolidation_log"] == raw["consolidation_log"]
+    assert final["source_inputs"] == raw["source_inputs"]
+    step = final["procedures"][0]["steps"][0]
+    assert step["merged_from"] == ["v1/proc_001/1", "v2/proc_001/1"]
+    assert [s["input_id"] for s in step["sources"]] == ["v1", "v2"]
+    assert step["source_slides"] == [2]
+    assert final["concepts"][0]["source_slides"] == [4]
+
+
+def test_rework_of_consolidated_run_keeps_log_provenance_and_images(monkeypatch, repo, settings) -> None:
+    parent, _ = _run_consolidated(monkeypatch, repo, settings)
+    child = RunRecord(
+        session_id="s1", requester_upn="utente@demo.local", input_filename=parent.input_filename, input_type="video",
+        content_type="video", model_id=OPENROUTER_MODEL, output_artifacts="html_folder", parent_run_id=parent.run_id,
+    )
+    repo.create_run(child)
+    rework = FnProvider([step2_echo("Manuale rielaborato")])
+    patch_providers(monkeypatch, {OPENROUTER_MODEL: rework})
+
+    process_run(child, repo, settings)
+
+    updated = repo.get_run(child.run_id)
+    assert updated.status == RunStatus.DONE
+    assert "merged_from" not in rework.calls[0][1]
+    final = json.loads(repo.get_file(updated.final_json_ref))
+    assert final["title"] == "Manuale rielaborato"
+    assert final["consolidation_log"]["conflicts"][0]["chosen"]["filename"] == "webinar.mp4"
+    assert final["procedures"][0]["steps"][0]["sources"][0]["kind"] == "webinar"
+    names = set(zipfile.ZipFile(io.BytesIO(repo.get_file(updated.zip_ref))).namelist())
+    assert {"screenshots/proc_001_step_001.png", "screenshots/con_001_slide.png"} <= names
