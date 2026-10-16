@@ -159,6 +159,29 @@ def _reconstruct_screenshot_map(
     return mapping
 
 
+def _reconstruct_slide_map(
+    screenshots_dir: Path | None, procedures: list[dict]
+) -> dict[tuple[str, int], Path]:
+    """Slide secondarie degli step (``{proc_id}_step_{n:03d}_slide.png``)."""
+    if screenshots_dir is None:
+        return {}
+    mapping: dict[tuple[str, int], Path] = {}
+    for proc in procedures:
+        for step in proc.get("steps", []):
+            path = screenshots_dir / f"{proc.get('id')}_step_{step.get('number'):03d}_slide.png"
+            if path.exists():
+                mapping[(proc.get("id"), step.get("number"))] = path
+    return mapping
+
+
+def _reconstruct_concept_image_map(screenshots_dir: Path | None, concepts: list[dict]) -> dict[str, Path]:
+    """Slide dei concetti (``{con_id}_slide.png``)."""
+    if screenshots_dir is None:
+        return {}
+    paths = {con.get("id"): screenshots_dir / f"{con.get('id')}_slide.png" for con in concepts}
+    return {con_id: path for con_id, path in paths.items() if path.exists()}
+
+
 def _build_and_persist_output(
     run: RunRecord,
     repo: Repository,
@@ -171,11 +194,14 @@ def _build_and_persist_output(
     li persiste (cartella + zip). Non usato dalla modalità KB densa, che
     produce già il proprio TXT direttamente in _process_kb_densa."""
     screenshot_map = _reconstruct_screenshot_map(screenshots_dir, final_data.get("procedures", []))
+    slide_map = _reconstruct_slide_map(screenshots_dir, final_data.get("procedures", []))
+    concept_image_map = _reconstruct_concept_image_map(screenshots_dir, final_data.get("concepts", []) or [])
     log = Logger()
     log.log("INFO", f"Run {run.run_id} completata")
     output_artifacts = run.output_artifacts.split(",") if run.output_artifacts else []
     files, zip_bytes = build_output_zip(
-        final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log
+        final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log,
+        slide_map=slide_map, concept_image_map=concept_image_map,
     )
 
     artifacts_dir = settings.data_dir / "artifacts" / run.run_id
@@ -425,6 +451,15 @@ def _process_video_consolidated(
         prior_tokens_in, prior_tokens_out, prior_cost = _record_consolidation(
             repo, run, settings, cons_tokens_in, cons_tokens_out, step1_tokens_in, step1_tokens_out, step1_cost
         )
+
+        slides_path = None
+        if slides is not None:
+            slides_path = tmp_path / f"{slides.input_id}_{slides.filename}"
+            slides_path.write_bytes(slides.data)
+        screenshots.extract_step_images(
+            consolidated, video_paths, slides_path, screenshots_dir, warn=image_warnings.append
+        )
+        consolidated["consolidation_log"]["warnings"].extend(image_warnings)
 
     raw_json_bytes = json.dumps(consolidated, ensure_ascii=False, indent=2).encode("utf-8")
     raw_json_ref = repo.save_output_file(run.run_id, "raw.json", raw_json_bytes)

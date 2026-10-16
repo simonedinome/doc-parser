@@ -25,6 +25,8 @@ def build_artifacts(
     output_artifacts: list[str],
     screenshot_map: dict[tuple[str, int], Path | None],
     log: Logger,
+    slide_map: dict[tuple[str, int], Path] | None = None,
+    concept_image_map: dict[str, Path] | None = None,
 ) -> dict[str, bytes]:
     """Ritorna ``{nome_file: contenuto}`` solo per gli artefatti selezionati
     dall'utente in ``output_artifacts`` (chiavi: ``procedura``, ``glossario``,
@@ -37,11 +39,13 @@ def build_artifacts(
     if "rag_chunks" in output_artifacts:
         files["rag_chunks.jsonl"] = build_rag_jsonl(data, source_filename).encode("utf-8")
     if "html_folder" in output_artifacts:
-        files[HTML_FILENAME_FOLDER] = build_html_folder(data, screenshot_map, language).encode("utf-8")
+        files[HTML_FILENAME_FOLDER] = build_html_folder(
+            data, screenshot_map, language, slide_map, concept_image_map
+        ).encode("utf-8")
     if "html_standalone" in output_artifacts:
-        files[HTML_FILENAME_STANDALONE] = build_html_standalone(data, screenshot_map, language).encode(
-            "utf-8"
-        )
+        files[HTML_FILENAME_STANDALONE] = build_html_standalone(
+            data, screenshot_map, language, slide_map, concept_image_map
+        ).encode("utf-8")
     files["log.txt"] = build_log_txt(log.lines, language).encode("utf-8")
     return files
 
@@ -54,11 +58,15 @@ def build_output_zip(
     screenshot_map: dict[tuple[str, int], Path | None],
     screenshots_dir: Path | None,
     log: Logger,
+    slide_map: dict[tuple[str, int], Path] | None = None,
+    concept_image_map: dict[str, Path] | None = None,
 ) -> tuple[dict[str, bytes], bytes]:
     """Costruisce gli artefatti e lo ZIP che li impacchetta.
 
     Ritorna (artefatti, zip_bytes).
     """
-    files = build_artifacts(data, source_filename, language, output_artifacts, screenshot_map, log)
+    files = build_artifacts(
+        data, source_filename, language, output_artifacts, screenshot_map, log, slide_map, concept_image_map
+    )
     zip_bytes = create_zip(files, screenshots_dir, output_artifacts)
     return files, zip_bytes

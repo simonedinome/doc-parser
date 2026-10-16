@@ -33,6 +33,7 @@ _STRINGS = {
         "html_toc": "Indice",
         "html_concept_tag": "Concetto",
         "html_procedure_tag": "Procedura",
+        "html_slide_caption": "Slide {n}",
         "log_header": "LOG DI GENERAZIONE",
     },
     "en": {
@@ -59,6 +60,7 @@ _STRINGS = {
         "html_toc": "Table of contents",
         "html_concept_tag": "Concept",
         "html_procedure_tag": "Procedure",
+        "html_slide_caption": "Slide {n}",
         "log_header": "GENERATION LOG",
     },
 }

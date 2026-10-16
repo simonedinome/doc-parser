@@ -202,7 +202,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
       1. 2 chiamate di step 1, 1 di consolidamento e 1 di step 2;
       2. nessuna procedura duplicata;
       3. costi per fase valorizzati.
-8. [ ] Task 8 — Immagini per step e concetto · 1 h 30 min · dipende da: 7
+8. [x] Task 8 — Immagini per step e concetto · 1 h 30 min · dipende da: 7
    1. In `pipeline/screenshots.py`, nuova `extract_step_images(...)` che riusa ffmpeg e PyMuPDF. L'immagine principale `{proc}_step_{n:03d}.png` si cerca in questo ordine:
       1. timestamp di un webinar, dal più recente;
       2. prima slide;

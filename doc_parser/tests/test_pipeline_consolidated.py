@@ -302,3 +302,22 @@ def test_zip_of_consolidated_run_contains_artifacts(monkeypatch, repo, settings)
 
     names = set(zipfile.ZipFile(io.BytesIO(repo.get_file(repo.get_run(run.run_id).zip_ref))).namelist())
     assert {"procedura.txt", "glossario.txt", "rag_chunks.jsonl", "documentazione_standalone.html", "log.txt"} <= names
+
+
+def test_images_fall_back_to_slides_and_reach_the_zip(monkeypatch, repo, settings) -> None:
+    run = consolidated_run(repo, OPENROUTER_MODEL, output_artifacts="html_folder")
+    patch_providers(
+        monkeypatch,
+        {STEP1_MODEL: FnProvider([WEBINAR_STEP1, PILLOLA_STEP1]), OPENROUTER_MODEL: FnProvider([consolidation_response(), step2_echo()])},
+    )
+
+    process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    zf = zipfile.ZipFile(io.BytesIO(repo.get_file(updated.zip_ref)))
+    names = set(zf.namelist())
+    # step 1 (slide 2) e step 3 (slide 3 dalla pillola): ffmpeg assente, ripiego sulla slide
+    assert {"screenshots/proc_001_step_001.png", "screenshots/proc_001_step_003.png", "screenshots/con_001_slide.png"} <= names
+    assert "screenshots/proc_001_step_002.png" not in names  # nessuna slide e nessun fotogramma
+    html = zf.read("documentazione.html").decode("utf-8")
+    assert 'src="screenshots/con_001_slide.png"' in html
