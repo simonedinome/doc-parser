@@ -226,7 +226,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
       1. il prompt dello step 2 non contiene `merged_from` né `consolidation_log`;
       2. `final.json` ha la provenienza riattaccata;
       3. la Rielabora di una run consolidata mantiene log, provenienza e immagini.
-10. [ ] Task 10 — `log.txt` con le discordanze · 45 min · dipende da: 7
+10. [x] Task 10 — `log.txt` con le discordanze · 45 min · dipende da: 7
     1. Nuovo modulo `output/consolidation_report.py` con `build_consolidation_lines(data, language)`, chiamato in `_build_and_persist_output` e aggiunto alle righe del `Logger`. Il `log.txt` esiste già in ogni zip. Le sezioni sono:
        1. FONTI;
        2. DISCORDANZE (tema, fonte tenuta, fonti scartate con file, tipo, data e timestamp o slide, motivo);

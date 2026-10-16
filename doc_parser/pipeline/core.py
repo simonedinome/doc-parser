@@ -27,6 +27,7 @@ from doc_parser.ingestion import guardrails
 from doc_parser.ingestion.extract import LOCAL_EXTRACTION_KINDS, extract_text
 from doc_parser.ingestion.mime import mime_type_for
 from doc_parser.output.assembly import build_output_zip
+from doc_parser.output.consolidation_report import build_consolidation_lines
 from doc_parser.output.logger import Logger
 from doc_parser.pipeline import consolidation, merger, parser, screenshots
 from doc_parser.pipeline.inputs import InputFile, load_inputs
@@ -201,6 +202,7 @@ def _build_and_persist_output(
     concept_image_map = _reconstruct_concept_image_map(screenshots_dir, final_data.get("concepts", []) or [])
     log = Logger()
     log.log("INFO", f"Run {run.run_id} completata")
+    log.add_block(build_consolidation_lines(final_data, run.language))
     output_artifacts = run.output_artifacts.split(",") if run.output_artifacts else []
     files, zip_bytes = build_output_zip(
         final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log,

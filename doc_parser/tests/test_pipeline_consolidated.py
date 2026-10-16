@@ -373,3 +373,11 @@ def test_rework_of_consolidated_run_keeps_log_provenance_and_images(monkeypatch,
     assert final["procedures"][0]["steps"][0]["sources"][0]["kind"] == "webinar"
     names = set(zipfile.ZipFile(io.BytesIO(repo.get_file(updated.zip_ref))).namelist())
     assert {"screenshots/proc_001_step_001.png", "screenshots/con_001_slide.png"} <= names
+
+
+def test_log_txt_has_discrepancies_section(monkeypatch, repo, settings) -> None:
+    updated, _ = _run_consolidated(monkeypatch, repo, settings, output_artifacts="procedura")
+    log_txt = zipfile.ZipFile(io.BytesIO(repo.get_file(updated.zip_ref))).read("log.txt").decode("utf-8")
+    assert "== DISCORDANZE ==" in log_txt
+    assert "Fonte tenuta: webinar.mp4 (webinar, registrato il 2026-06-03)" in log_txt
+    assert "== SLIDE NON INCLUSE ==" in log_txt and "Slide 1: copertina" in log_txt
