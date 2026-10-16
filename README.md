@@ -59,6 +59,9 @@ python -m doc_parser.cli --urls-file urls.txt --content-type video
 
 # Coda YAML: run con parametri diversi, merge multi-video, resume automatico
 python -m doc_parser.cli --runs-file runs.yaml
+
+# Riprende una serie di video consolidata FALLITA senza rifare lo step 1
+python -m doc_parser.cli --resume <run_id> --model anthropic/claude-sonnet-5
 ```
 
 Vedi `runs.example.yaml` per lo schema completo della coda YAML (impostazioni globali,
@@ -110,6 +113,26 @@ Output in più rispetto alle altre run:
 - nell'HTML, la slide accanto allo screenshot dello step e la slide dei concetti.
 
 I costi della run sommano step 1, consolidamento (colonne `consolidation_*`) e step 2.
+
+### Ripresa di una serie fallita
+
+Se il consolidamento o lo step 2 falliscono (ad esempio "step sorgente non coperti"
+con un modello economico), la serie si riprende senza ripagare lo step 1:
+
+```bash
+python -m doc_parser.cli --resume <run_id> --model anthropic/claude-sonnet-5
+```
+
+- si riprendono solo run video in stato FAILED passate dal consolidamento (almeno
+  due fonti, anche 1 video + PDF);
+- la nuova run (campo `resume_of_run_id`) riusa gli input e gli `step1_v*.json`
+  della run madre e rifà consolidamento e step 2; lo step 1 riusato costa 0, e
+  solo i video senza step 1 valido vengono rifatti, con il modello di step 1
+  della run madre;
+- input, tipo di contenuto, lingua e modalità di output sono quelli della run
+  madre: cambiano solo `--model` (default: quello della madre) e
+  `--output-artifacts`; `--requester` e `--parallel` non sono ammessi;
+- il `log.txt` elenca nella sezione AVVISI gli step 1 ripresi o rifatti.
 
 ## Configurazione modelli
 

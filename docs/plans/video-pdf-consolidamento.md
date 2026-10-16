@@ -339,3 +339,10 @@ Verifica al commit `da567c3`. Le decisioni marcate "Simone" sono state confermat
 17. **Retry dello step 2 (task 9, Simone).** Al retry `_run_step2` manda il JSON grezzo seguito dal feedback, invece del solo feedback. Vale anche per Rielabora.
 18. **Branch e PR (Simone).** PR in bozza con base `claude/streamlit-guide-section-c7zbcu`.
 19. **Spike in parallelo (Simone).** Il task 1 lo esegue Simone in locale; gli altri task procedono, con gli allegati di step 1 costruiti in un'unica funzione per applicare l'eventuale ripiego PNG.
+20. **Ripresa da step 1 (Simone, 16/10/2026).** Dopo il collaudo (step 1 riuscito su 5 video + PDF, 3,47 €; consolidamento fallito con Haiku) una run consolidata FAILED si riprende con `python -m doc_parser.cli --resume RUN_ID [--model …] [--output-artifacts …]`:
+    1. nuovo campo `RunRecord.resume_of_run_id`, separato da `parent_run_id` (Rielabora invariata);
+    2. la figlia eredita `input_manifest_ref`, `content_type`, `language` e `output_mode`; cambiano solo `model_id` e `output_artifacts`;
+    3. si riprendono solo madri video FAILED passate dal consolidamento (content type `video` e almeno 2 file, anche 1 video + PDF), con la stessa lingua e gli input ancora su disco;
+    4. gli `step1_v*.json` validi della madre si riusano a costo 0; i video mancanti o non validi si rifanno con lo `step1_model` della madre (rifiuto se non è più in `models.yaml`; logica attuale se la madre non ne ha uno);
+    5. nella CLI i default dei flag sono None e il batch applica i valori di prima; con `--resume`, `--requester` e `--parallel` danno errore.
+21. **Ripresa dalla UI (da fare prima del merge).** Sezione "Riprendi" in «Le mie richieste» per le run video FAILED con step 1 salvati, con scelta del modello; si fa dopo il collaudo di `--resume` (task 11 della richiesta del 16/10), in un commit separato.
