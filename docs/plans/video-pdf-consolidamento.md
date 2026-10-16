@@ -138,7 +138,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
    1. Crea `feat/video-pdf-consolidamento` da `claude/streamlit-guide-section-c7zbcu`.
    2. Aggiungi `python-pptx>=1.0.2` a `requirements.txt`.
    3. Accettazione: `pip install -r requirements.txt` funziona e `pytest doc_parser/tests/` dà 228 test passati.
-3. [ ] Task 3 — Migrazione DB e colonne dei costi di consolidamento · 45 min · dipende da: 2
+3. [x] Task 3 — Migrazione DB e colonne dei costi di consolidamento · 45 min · dipende da: 2
    1. In `core/models.py`, `RunRecord` riceve `consolidation_model`, `consolidation_tokens_in`, `consolidation_tokens_out` e `consolidation_cost_eur`, tutti facoltativi.
    2. In `storage/sqlite_repo.py`, `_init_schema` legge `PRAGMA table_info(runs)` e lancia `ALTER TABLE runs ADD COLUMN` per ogni colonna mancante, con il tipo da `_column_type`.
    3. In `ui/format.py`, `friendly_row` riceve la colonna "Costo consolidamento (EUR)".

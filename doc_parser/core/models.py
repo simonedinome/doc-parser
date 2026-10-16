@@ -107,6 +107,11 @@ class RunRecord(BaseModel):
     step2_tokens_out: int | None = None
     step2_cost_eur: float | None = None
 
+    consolidation_model: str | None = None
+    consolidation_tokens_in: int | None = None
+    consolidation_tokens_out: int | None = None
+    consolidation_cost_eur: float | None = None
+
     chunk_count: int | None = None
     uncertainty_count: int | None = None
     retry_count: int = 0

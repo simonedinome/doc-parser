@@ -183,3 +183,64 @@ def test_save_file_sanitizes_filename(repo: SqliteRepository) -> None:
     assert "etc" not in Path(ref).parent.name
     assert Path(ref).parent.name == "inbox"
     assert repo.get_file(ref) == b"x"
+
+
+_NEW_COLUMNS = {
+    "consolidation_model",
+    "consolidation_tokens_in",
+    "consolidation_tokens_out",
+    "consolidation_cost_eur",
+}
+
+
+def _create_old_schema_db(data_dir: Path) -> None:
+    import sqlite3
+
+    from doc_parser.storage.sqlite_repo import _COLUMNS, _column_type, _to_row
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    old_columns = [c for c in _COLUMNS if c not in _NEW_COLUMNS]
+    columns_sql = ", ".join(
+        f"{name} {'TEXT PRIMARY KEY' if name == 'run_id' else _column_type(name)}" for name in old_columns
+    )
+    conn = sqlite3.connect(data_dir / "runs.db")
+    conn.execute(f"CREATE TABLE runs ({columns_sql})")
+    row = _to_row(_run(run_id="vecchia", status=RunStatus.DONE))
+    conn.execute(
+        f"INSERT INTO runs ({', '.join(old_columns)}) VALUES ({', '.join('?' for _ in old_columns)})",
+        [row[c] for c in old_columns],
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_old_schema_db_is_migrated_and_accepts_new_fields(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _create_old_schema_db(data_dir)
+
+    repo = SqliteRepository(data_dir=data_dir)
+
+    old = repo.get_run("vecchia")
+    assert old is not None and old.consolidation_cost_eur is None
+
+    run = repo.create_run(
+        _run(
+            consolidation_model="anthropic/claude-haiku-4.5",
+            consolidation_tokens_in=1200,
+            consolidation_tokens_out=340,
+            consolidation_cost_eur=0.0123,
+        )
+    )
+    loaded = repo.get_run(run.run_id)
+    assert loaded == run
+
+    repo.update_run(run.run_id, consolidation_cost_eur=0.5)
+    assert repo.get_run(run.run_id).consolidation_cost_eur == 0.5
+
+
+def test_migration_is_idempotent(tmp_path: Path) -> None:
+    data_dir = tmp_path / "data"
+    _create_old_schema_db(data_dir)
+    SqliteRepository(data_dir=data_dir)
+    repo = SqliteRepository(data_dir=data_dir)
+    assert repo.get_run("vecchia") is not None
