@@ -57,7 +57,17 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
         _process_elaborate_only(run, repo, settings)
         return
 
-    input_files = _load_input_files(run, repo)
+    if run.resume_of_run_id:
+        mother = _validate_resume(run, repo)
+        try:
+            input_files = _load_input_files(run, repo)
+        except OSError as exc:
+            raise GuardrailRejection(
+                f"Gli input della run {mother.run_id[:8]} non sono più su disco ({exc}): "
+                "non si può riprendere, avvia una nuova run."
+            ) from exc
+    else:
+        input_files = _load_input_files(run, repo)
     if not input_files:
         raise GuardrailRejection("File di input mancante")
 
@@ -408,7 +418,34 @@ def _process_video_consolidated(
     chosen_model = get_model(settings.models_file, run.model_id) if run.model_id else None
     single_pass_gemini = chosen_model is not None and chosen_model.backend == "gemini"
     step1_model_id = run.model_id if single_pass_gemini else _step1_video_model(settings)
-    step1_provider = get_provider_for_model(step1_model_id, settings)
+
+    mother = repo.get_run(run.resume_of_run_id) if run.resume_of_run_id else None
+    resume_warnings: list[str] = []
+    resumed: dict[str, dict] = {}
+    if mother is not None:
+        for video in videos:
+            data = _load_resumed_step1(mother.run_id, repo, video, resume_warnings)
+            if data is not None:
+                resumed[video.input_id] = data
+        if mother.step1_model:
+            # Lo step 1 della serie resta omogeneo: i video da rifare usano il modello della madre.
+            step1_model_id = mother.step1_model
+            if len(resumed) < len(videos) and get_model(settings.models_file, step1_model_id) is None:
+                raise GuardrailRejection(
+                    f"Il modello di step 1 della run madre non è più disponibile ({step1_model_id}): "
+                    "avvia una nuova run."
+                )
+        repo.update_run(
+            run.run_id,
+            step1_provider=mother.step1_provider,
+            step1_model=step1_model_id,
+            step1_tokens_in=0,
+            step1_tokens_out=0,
+            step1_cost_eur=0.0,
+        )
+        _record_running_totals(repo, run.run_id, 0, 0, 0.0)
+
+    step1_provider = get_provider_for_model(step1_model_id, settings) if len(resumed) < len(videos) else None
     screenshots_dir = _screenshots_output_dir(settings, run.run_id)
     image_warnings: list[str] = []
 
@@ -417,10 +454,22 @@ def _process_video_consolidated(
         video_paths: dict[str, Path] = {}
         step1_results: list[tuple[InputFile, dict]] = []
         step1_tokens_in = step1_tokens_out = 0
+        step1_cost = 0.0
         for video in videos:
             video_path = tmp_path / f"{video.input_id}_{video.filename}"
             video_path.write_bytes(video.data)
             video_paths[video.input_id] = video_path
+
+            if video.input_id in resumed:
+                # Step 1 riusato dalla run madre: nessun costo, copia nella figlia per una futura ripresa.
+                data_dict = resumed[video.input_id]
+                repo.save_output_file(
+                    run.run_id,
+                    f"step1_{video.input_id}.json",
+                    json.dumps(data_dict, ensure_ascii=False, indent=2).encode("utf-8"),
+                )
+                step1_results.append((video, data_dict))
+                continue
 
             system_prompt, user_prompt, attachments = _step1_request("video", run.language, video, slides)
             raw_text, tokens_in, tokens_out = step1_provider.generate(system_prompt, user_prompt, attachments)
@@ -469,6 +518,7 @@ def _process_video_consolidated(
         screenshots.extract_step_images(
             consolidated, video_paths, slides_path, screenshots_dir, warn=image_warnings.append
         )
+        consolidated["consolidation_log"]["warnings"][:0] = resume_warnings
         consolidated["consolidation_log"]["warnings"].extend(image_warnings)
 
     raw_json_bytes = json.dumps(consolidated, ensure_ascii=False, indent=2).encode("utf-8")
@@ -484,6 +534,94 @@ def _process_video_consolidated(
         run, repo, settings, consolidated, raw_json_ref, single_pass_gemini, screenshots_dir,
         prior_tokens_in, prior_tokens_out, prior_cost,
     )
+
+
+def resume_run_record(
+    mother: RunRecord, model_id: str | None = None, output_artifacts: str | None = None
+) -> RunRecord:
+    """Run figlia che riprende *mother*: stessi input (nessuna copia dei
+    video), content_type, lingua e output_mode; cambiano solo modello e file
+    di output. Richiedente e sessione restano quelli della madre."""
+    return RunRecord(
+        session_id=mother.session_id,
+        requester_upn=mother.requester_upn,
+        input_filename=mother.input_filename,
+        input_type=mother.input_type,
+        input_size_bytes=mother.input_size_bytes,
+        input_manifest_ref=mother.input_manifest_ref,
+        content_type=mother.content_type,
+        language=mother.language,
+        output_mode=mother.output_mode,
+        output_artifacts=output_artifacts or mother.output_artifacts,
+        model_id=model_id or mother.model_id,
+        resume_of_run_id=mother.run_id,
+    )
+
+
+def _validate_resume(run: RunRecord, repo: Repository) -> RunRecord:
+    """Controlla che *run* possa riprendere la run madre; ritorna la madre.
+
+    Si riprendono solo le run video FAILED passate dal consolidamento (stesso
+    criterio di _process_video: content_type video e almeno 2 file in input),
+    con gli stessi input, la stessa lingua e lo stesso content_type.
+    """
+    mother = repo.get_run(run.resume_of_run_id)
+    if mother is None:
+        raise GuardrailRejection(f"Run da riprendere {run.resume_of_run_id!r} non trovata.")
+    label = mother.run_id[:8]
+    if mother.input_type != "video":
+        raise GuardrailRejection(
+            f"La run {label} non è una run video: si riprendono solo le serie di video consolidate."
+        )
+    if mother.status != RunStatus.FAILED:
+        raise GuardrailRejection(
+            f"La run {label} è in stato {mother.status.value}: si possono riprendere solo le run fallite."
+        )
+    sources = 0
+    if mother.input_manifest_ref:
+        try:
+            sources = len(json.loads(repo.get_file(mother.input_manifest_ref).decode("utf-8")))
+        except OSError as exc:
+            raise GuardrailRejection(
+                f"Gli input della run {label} non sono più su disco ({exc}): non si può riprendere, avvia una nuova run."
+            ) from exc
+    if (mother.content_type or "video") != "video" or sources < 2:
+        raise GuardrailRejection(
+            f"La run {label} non è passata dal consolidamento (un solo video senza PDF): "
+            "non ha step 1 da riprendere."
+        )
+    if run.language != mother.language:
+        raise GuardrailRejection(
+            f"La lingua della ripresa ({run.language}) è diversa da quella della run {label} "
+            f"({mother.language}): lo step 1 andrebbe rifatto, avvia una nuova run."
+        )
+    if run.content_type != mother.content_type:
+        raise GuardrailRejection(
+            f"Il tipo di contenuto della ripresa ({run.content_type}) è diverso da quello della run {label}."
+        )
+    if run.input_manifest_ref != mother.input_manifest_ref:
+        raise GuardrailRejection(f"La ripresa deve usare gli stessi input della run {label}.")
+    return mother
+
+
+def _load_resumed_step1(
+    mother_run_id: str, repo: Repository, video: InputFile, warnings: list[str]
+) -> dict | None:
+    """JSON di step 1 di *video* salvato dalla run madre, riletto con gli
+    stessi controlli di uno step 1 nuovo; None (con avviso) se manca o non è
+    valido, e lo step 1 di quel video viene rifatto."""
+    label = mother_run_id[:8]
+    raw = repo.get_output_file(mother_run_id, f"step1_{video.input_id}.json")
+    if raw is None:
+        warnings.append(f"Step 1 di {video.input_id} non salvato nella run {label}: rifatto")
+        return None
+    try:
+        data = consolidation.normalize_step1(parser.parse_response(raw.decode("utf-8"), "video"))
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        warnings.append(f"Step 1 di {video.input_id} della run {label} non valido ({exc}): rifatto")
+        return None
+    warnings.append(f"Step 1 di {video.input_id} ripreso dalla run {label}")
+    return data
 
 
 def _record_consolidation(

@@ -394,3 +394,227 @@ def test_failed_second_video_keeps_first_video_cost(monkeypatch, repo, settings)
     updated = repo.get_run(run.run_id)
     assert updated.step1_tokens_in == 1700  # anche la risposta non valida è stata pagata
     assert updated.cost_eur == pytest.approx(compute_cost(STEP1_MODEL, 1700, 250, settings.models_file).cost_eur)
+
+
+# --- Ripresa di una run consolidata fallita (resume_of_run_id) ---
+
+SONNET_MODEL = "anthropic/claude-sonnet-5"
+_TRUNCATED = ('{"title": "troncato', 100, 50)
+
+
+def _failed_mother(monkeypatch, repo, settings, step1_responses=None, **run_kwargs):
+    """Run madre consolidata FAILED: step 1 riuscito, consolidamento troncato."""
+    mother = consolidated_run(repo, OPENROUTER_MODEL, **run_kwargs)
+    responses = step1_responses if step1_responses is not None else [WEBINAR_STEP1, PILLOLA_STEP1]
+    patch_providers(
+        monkeypatch,
+        {STEP1_MODEL: FnProvider(responses), OPENROUTER_MODEL: FnProvider([_TRUNCATED] * (settings.retry_max_attempts + 1))},
+    )
+    with pytest.raises(ValueError):
+        process_run(mother, repo, settings)
+    repo.update_run(mother.run_id, status=RunStatus.FAILED)
+    return repo.get_run(mother.run_id)
+
+
+def _resume(repo, mother, model_id=SONNET_MODEL, **overrides) -> RunRecord:
+    from doc_parser.pipeline.core import resume_run_record
+
+    child = resume_run_record(mother, model_id=model_id)
+    for key, value in overrides.items():
+        setattr(child, key, value)
+    return repo.create_run(child)
+
+
+def _log_txt(repo, run_id) -> str:
+    return zipfile.ZipFile(io.BytesIO(repo.get_file(repo.get_run(run_id).zip_ref))).read("log.txt").decode("utf-8")
+
+
+def test_resume_reuses_all_step1_and_redoes_consolidation(monkeypatch, repo, settings) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings)
+    child = _resume(repo, mother)
+    step1 = FnProvider([])  # non deve mai essere chiamato
+    sonnet = FnProvider([consolidation_response(), step2_echo()])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, SONNET_MODEL: sonnet})
+
+    process_run(child, repo, settings)
+
+    updated = repo.get_run(child.run_id)
+    assert updated.status == RunStatus.DONE
+    assert updated.resume_of_run_id == mother.run_id
+    assert step1.calls == [] and len(sonnet.calls) == 2
+    assert updated.step1_cost_eur == 0 and updated.step1_tokens_in == 0
+    assert updated.step1_model == mother.step1_model == STEP1_MODEL
+    cons = compute_cost(SONNET_MODEL, 3000, 800, settings.models_file).cost_eur
+    step2 = compute_cost(SONNET_MODEL, 500, 400, settings.models_file).cost_eur
+    assert updated.cost_eur == pytest.approx(cons + step2)
+    assert updated.input_manifest_ref == mother.input_manifest_ref
+    assert repo.get_output_file(child.run_id, "step1_v1.json") == repo.get_output_file(mother.run_id, "step1_v1.json")
+    log_txt = _log_txt(repo, child.run_id)
+    assert f"Step 1 di v1 ripreso dalla run {mother.run_id[:8]}" in log_txt
+    assert f"Step 1 di v2 ripreso dalla run {mother.run_id[:8]}" in log_txt
+
+
+def test_resume_partial_redoes_only_missing_videos(monkeypatch, repo, settings) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings, step1_responses=[WEBINAR_STEP1, ("non è JSON", 700, 50)])
+    assert repo.get_output_file(mother.run_id, "step1_v2.json") is None
+    child = _resume(repo, mother)
+    step1 = FnProvider([PILLOLA_STEP1])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, SONNET_MODEL: FnProvider([consolidation_response(), step2_echo()])})
+
+    process_run(child, repo, settings)
+
+    updated = repo.get_run(child.run_id)
+    assert updated.status == RunStatus.DONE
+    assert len(step1.calls) == 1
+    assert step1.calls[0][2][0].filename == "pillola.mp4"
+    assert updated.step1_model == STEP1_MODEL
+    assert updated.step1_cost_eur == pytest.approx(compute_cost(STEP1_MODEL, 1000, 200, settings.models_file).cost_eur)
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [b"{non e' json", json.dumps({"title": "T", "summary": "S"}).encode(), json.dumps(["lista"]).encode()],
+)
+def test_resume_redoes_unreadable_or_invalid_step1_with_warning(monkeypatch, repo, settings, broken) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings)
+    repo.save_output_file(mother.run_id, "step1_v2.json", broken)
+    child = _resume(repo, mother)
+    step1 = FnProvider([PILLOLA_STEP1])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, SONNET_MODEL: FnProvider([consolidation_response(), step2_echo()])})
+
+    process_run(child, repo, settings)
+
+    assert repo.get_run(child.run_id).status == RunStatus.DONE
+    assert len(step1.calls) == 1
+    log_txt = _log_txt(repo, child.run_id)
+    assert f"Step 1 di v2 della run {mother.run_id[:8]} non valido" in log_txt
+    assert f"Step 1 di v1 ripreso dalla run {mother.run_id[:8]}" in log_txt
+
+
+def test_resume_single_video_with_pdf_is_accepted(monkeypatch, repo, settings) -> None:
+    mother = _failed_mother(
+        monkeypatch, repo, settings, step1_responses=[WEBINAR_STEP1], videos=(("webinar.mp4", "webinar", None),)
+    )
+    child = _resume(repo, mother)
+    response = json.loads(consolidation_response(conflicts=[])[0])
+    steps = response["procedures"][0]["steps"]
+    steps[0]["merged_from"] = ["v1/proc_001/1"]
+    del steps[2]
+    response["concepts"][0]["slides"] = [3, 4]
+    step1 = FnProvider([])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, SONNET_MODEL: FnProvider([(json.dumps(response), 10, 10), step2_echo()])})
+
+    process_run(child, repo, settings)
+
+    assert repo.get_run(child.run_id).status == RunStatus.DONE
+    assert step1.calls == []
+
+
+def test_resume_with_unavailable_step1_model_and_videos_to_redo_is_rejected(monkeypatch, repo, settings) -> None:
+    from doc_parser.core.errors import GuardrailRejection
+
+    mother = _failed_mother(monkeypatch, repo, settings, step1_responses=[WEBINAR_STEP1, ("non è JSON", 1, 1)])
+    repo.update_run(mother.run_id, step1_model="gemini-dismesso")
+    child = _resume(repo, repo.get_run(mother.run_id))
+    step1 = FnProvider([])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, SONNET_MODEL: FnProvider([])})
+
+    with pytest.raises(GuardrailRejection, match="modello di step 1 della run madre non è più disponibile"):
+        process_run(child, repo, settings)
+    assert step1.calls == []
+
+
+def test_full_resume_with_unavailable_step1_model_is_allowed(monkeypatch, repo, settings) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings)
+    repo.update_run(mother.run_id, step1_model="gemini-dismesso")
+    child = _resume(repo, repo.get_run(mother.run_id))
+    patch_providers(monkeypatch, {SONNET_MODEL: FnProvider([consolidation_response(), step2_echo()])})
+
+    process_run(child, repo, settings)
+
+    updated = repo.get_run(child.run_id)
+    assert updated.status == RunStatus.DONE
+    assert updated.step1_model == "gemini-dismesso" and updated.step1_cost_eur == 0
+
+
+def test_resume_mother_without_step1_model_uses_current_logic(monkeypatch, repo, settings) -> None:
+    mother = consolidated_run(repo, OPENROUTER_MODEL)
+    repo.update_run(mother.run_id, status=RunStatus.FAILED)  # fallita prima di qualunque step 1
+    child = _resume(repo, repo.get_run(mother.run_id))
+    step1 = FnProvider([WEBINAR_STEP1, PILLOLA_STEP1])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, SONNET_MODEL: FnProvider([consolidation_response(), step2_echo()])})
+
+    process_run(child, repo, settings)
+
+    updated = repo.get_run(child.run_id)
+    assert updated.status == RunStatus.DONE
+    assert len(step1.calls) == 2 and updated.step1_model == STEP1_MODEL
+
+
+def _rejected(monkeypatch, repo, settings, child, match):
+    from doc_parser.core.errors import GuardrailRejection
+
+    patch_providers(monkeypatch, {})  # nessun provider deve essere chiamato
+    with pytest.raises(GuardrailRejection, match=match):
+        process_run(child, repo, settings)
+
+
+def test_resume_of_missing_mother_is_rejected(monkeypatch, repo, settings) -> None:
+    child = repo.create_run(
+        RunRecord(session_id="s", requester_upn="u", input_type="video", content_type="video",
+                  model_id=SONNET_MODEL, resume_of_run_id="inesistente")
+    )
+    _rejected(monkeypatch, repo, settings, child, "non trovata")
+
+
+def test_resume_of_non_video_mother_is_rejected(monkeypatch, repo, settings) -> None:
+    mother = RunRecord(session_id="s", requester_upn="u", input_filename="doc.pdf", input_type="pdf",
+                       content_type="documento", model_id=OPENROUTER_MODEL, status=RunStatus.FAILED)
+    mother.input_path = repo.save_input_file(mother.run_id, "doc.pdf", sample_pdf_bytes())
+    repo.create_run(mother)
+    _rejected(monkeypatch, repo, settings, _resume(repo, mother), "non è una run video")
+
+
+def test_resume_of_single_file_video_mother_is_rejected(monkeypatch, repo, settings) -> None:
+    mother = RunRecord(session_id="s", requester_upn="u", input_filename="solo.mp4", input_type="video",
+                       content_type="video", model_id=OPENROUTER_MODEL, status=RunStatus.FAILED)
+    mother.input_path = repo.save_input_file(mother.run_id, "solo.mp4", b"video")
+    repo.create_run(mother)
+    _rejected(monkeypatch, repo, settings, _resume(repo, mother), "non è passata dal consolidamento")
+
+
+@pytest.mark.parametrize("status", [RunStatus.QUEUED, RunStatus.PROCESSING, RunStatus.DONE, RunStatus.REJECTED])
+def test_resume_of_mother_not_failed_is_rejected(monkeypatch, repo, settings, status) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings)
+    repo.update_run(mother.run_id, status=status)
+    _rejected(monkeypatch, repo, settings, _resume(repo, repo.get_run(mother.run_id)), "solo le run fallite")
+
+
+def test_resume_with_different_language_is_rejected(monkeypatch, repo, settings) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings)
+    _rejected(monkeypatch, repo, settings, _resume(repo, mother, language="en"), "lingua")
+
+
+def test_resume_with_inputs_missing_on_disk_is_rejected(monkeypatch, repo, settings) -> None:
+    mother = _failed_mother(monkeypatch, repo, settings)
+    manifest = json.loads(repo.get_file(mother.input_manifest_ref))
+    Path(manifest[1]["path_ref"]).unlink()
+    _rejected(monkeypatch, repo, settings, _resume(repo, mother), "non sono più su disco")
+
+
+def test_parent_run_id_still_goes_to_rework(monkeypatch, repo, settings) -> None:
+    parent, _ = _run_consolidated(monkeypatch, repo, settings)
+    child = repo.create_run(
+        RunRecord(session_id="s1", requester_upn="u", input_filename=parent.input_filename, input_type="video",
+                  content_type="video", model_id=OPENROUTER_MODEL, parent_run_id=parent.run_id)
+    )
+    step1 = FnProvider([])
+    rework = FnProvider([step2_echo("Rielaborato")])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, OPENROUTER_MODEL: rework})
+
+    process_run(child, repo, settings)
+
+    updated = repo.get_run(child.run_id)
+    assert updated.status == RunStatus.DONE and updated.resume_of_run_id is None
+    assert step1.calls == [] and len(rework.calls) == 1
+    assert updated.consolidation_model is None
