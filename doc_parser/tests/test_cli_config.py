@@ -95,3 +95,53 @@ def test_resolve_run_settings_merges_with_global_fallback() -> None:
     effective = resolve_run_settings(global_settings, run_settings)
     assert effective["model_id"] == "m2"
     assert effective["content_type"] == "video"
+
+
+def test_load_runs_config_reads_kind_and_recorded_at(tmp_path: Path) -> None:
+    path = _write_yaml(
+        tmp_path,
+        {
+            "runs": [
+                {
+                    "name": "serie",
+                    "inputs": [
+                        {"source": "file", "path": "w.mp4", "kind": "webinar", "recorded_at": "2026-06-03"},
+                        {"source": "file", "path": "p.mp4", "kind": "pillola"},
+                        {"source": "file", "path": "s.pdf"},
+                    ],
+                }
+            ]
+        },
+    )
+    inputs = load_runs_config(path).runs[0].inputs
+    assert [(i.kind, i.recorded_at) for i in inputs] == [("webinar", "2026-06-03"), ("pillola", None), (None, None)]
+
+
+def test_load_runs_config_accepts_unquoted_yaml_date(tmp_path: Path) -> None:
+    path = tmp_path / "runs.yaml"
+    path.write_text(
+        "runs:\n  - name: r1\n    inputs:\n      - source: file\n        path: a.mp4\n        recorded_at: 2026-06-03\n",
+        encoding="utf-8",
+    )
+    assert load_runs_config(path).runs[0].inputs[0].recorded_at == "2026-06-03"
+
+
+def test_load_runs_config_invalid_kind_names_the_run(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"runs": [{"name": "serie-x", "inputs": [{"source": "file", "path": "a.mp4", "kind": "corso"}]}]})
+    with pytest.raises(ValueError, match="Run 'serie-x'.*Tipo di video non valido"):
+        load_runs_config(path)
+
+
+def test_load_runs_config_invalid_date_names_the_run(tmp_path: Path) -> None:
+    path = _write_yaml(tmp_path, {"runs": [{"name": "serie-y", "inputs": [{"source": "file", "path": "a.mp4", "recorded_at": "03/06/2026"}]}]})
+    with pytest.raises(ValueError, match="Run 'serie-y'.*Data di registrazione non valida"):
+        load_runs_config(path)
+
+
+def test_runs_example_yaml_loads_with_series_example() -> None:
+    example = Path(__file__).resolve().parent.parent.parent / "runs.example.yaml"
+    config = load_runs_config(example)
+    serie = next(r for r in config.runs if r.name == "formazione-gestionale")
+    assert [i.kind for i in serie.inputs] == ["webinar", "webinar", "pillola", None]
+    assert serie.inputs[0].recorded_at == "2026-06-03"
+    assert "pptx" in serie.settings.output_artifacts

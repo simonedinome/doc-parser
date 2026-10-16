@@ -15,6 +15,7 @@ from doc_parser.cli.config import GlobalSettings, RunConfig, RunsConfig, load_ru
 from doc_parser.core.models import RunRecord, RunStatus
 from doc_parser.ingestion import guardrails
 from doc_parser.ingestion.downloader import download_url
+from doc_parser.pipeline.inputs import describe_inputs, save_manifest
 from doc_parser.settings import Settings
 from doc_parser.storage.sqlite_repo import SqliteRepository
 from doc_parser.worker.processor import Worker
@@ -62,11 +63,12 @@ def _process_run_config(
 ) -> RunRecord:
     effective = resolve_run_settings(global_settings, run_config.settings)
     is_video = effective["content_type"] in _VIDEO_CONTENT_TYPES
+    allow_slides_pdf = effective["content_type"] == "video"
 
     with TemporaryDirectory(prefix="doc_parser_cli_") as tmp_dir:
         files = _resolve_files(run_config, Path(tmp_dir))
 
-        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files])
+        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files], allow_slides_pdf)
         total_size = sum(len(data) for _, data in files)
         guardrails.check_size(total_size, settings.max_upload_mb)
 
@@ -91,6 +93,12 @@ def _process_run_config(
             filename, data = files[0]
             run.input_size_bytes = len(data)
             run.input_path = repo.save_input_file(run.run_id, filename, data)
+        elif input_type == "video":
+            descriptors = describe_inputs(
+                [(filename, item.kind, item.recorded_at) for (filename, _), item in zip(files, run_config.inputs)]
+            )
+            run.input_size_bytes = sum(len(data) for _, data in files)
+            run.input_manifest_ref = save_manifest(repo, run.run_id, descriptors, [data for _, data in files])
         else:
             manifest = []
             for filename, data in files:

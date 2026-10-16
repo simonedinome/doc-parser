@@ -83,7 +83,7 @@ def main() -> None:
         default="html_standalone,procedura,glossario,rag_chunks",
         help=(
             "Lista separata da virgole tra: html_standalone, html_folder, "
-            "procedura, glossario, rag_chunks"
+            "procedura, glossario, rag_chunks, pptx (pptx solo per le run video)"
         ),
     )
     parser.add_argument("--parallel", type=int, default=3, help="Run in parallelo (solo modalità batch)")

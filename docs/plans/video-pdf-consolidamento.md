@@ -156,7 +156,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
       4. PDF con `allow_slides_pdf=False` rifiutato;
       5. PDF da 51 MB rifiutato;
       6. manifest vecchio letto con i valori di default.
-5. [ ] Task 5 — CLI: etichette e date nella coda YAML · 45 min · dipende da: 4
+5. [x] Task 5 — CLI: etichette e date nella coda YAML · 45 min · dipende da: 4
    1. In `cli/config.py`, `InputSource` riceve `kind` (`webinar` o `pillola`) e `recorded_at` (data ISO). Un valore non valido produce un `ValueError` che nomina la run.
    2. In `cli/queue_runner.py`, il manifest viene scritto con i metadati e `allow_slides_pdf` vale vero se il content type effettivo è `video`.
    3. In `runs.example.yaml` aggiungi l'esempio 4: due webinar, una pillola e un PDF di slide in una sola run.
