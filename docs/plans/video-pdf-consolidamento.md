@@ -236,7 +236,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
     2. Se una fonte scartata è più recente di quella tenuta, la riga inizia con `ATTENZIONE: fonte scartata più recente, verificare`.
     3. Le etichette vanno in `output/strings.py`, in IT e EN.
     4. Test: rendering di conflitti, avviso di recenza, etichette EN, log invariato per le run senza consolidamento.
-11. [ ] Task 11 — PPT tutorial · 2 h 30 min · dipende da: 8
+11. [x] Task 11 — PPT tutorial · 2 h 30 min · dipende da: 8
     1. Nuovo modulo `output/pptx_builder.py` con `build_pptx(data, screenshot_map, concept_image_map, language) -> bytes`. In `output/assembly.py`, la chiave `pptx` produce `presentazione_tutorial.pptx`. `_build_and_persist_output` toglie `pptx` dagli artefatti delle run non video e scrive un avviso nel log.
     2. Layout:
        1. formato 16:9 (13,333 × 7,5 pollici), layout vuoto, sfondo bianco;

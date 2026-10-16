@@ -29,6 +29,7 @@ from doc_parser.ingestion.mime import mime_type_for
 from doc_parser.output.assembly import build_output_zip
 from doc_parser.output.consolidation_report import build_consolidation_lines
 from doc_parser.output.logger import Logger
+from doc_parser.output.strings import get_strings
 from doc_parser.pipeline import consolidation, merger, parser, screenshots
 from doc_parser.pipeline.inputs import InputFile, load_inputs
 from doc_parser.pipeline.language import apply_language_directive
@@ -204,6 +205,9 @@ def _build_and_persist_output(
     log.log("INFO", f"Run {run.run_id} completata")
     log.add_block(build_consolidation_lines(final_data, run.language))
     output_artifacts = run.output_artifacts.split(",") if run.output_artifacts else []
+    if "pptx" in output_artifacts and run.input_type != "video":
+        output_artifacts.remove("pptx")
+        log.log("WARN", get_strings(run.language)["pptx_skipped_non_video"])
     files, zip_bytes = build_output_zip(
         final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log,
         slide_map=slide_map, concept_image_map=concept_image_map,

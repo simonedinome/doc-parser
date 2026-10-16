@@ -41,3 +41,14 @@ def test_build_output_zip_contains_all_artifacts(tmp_path: Path) -> None:
     names = zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
     for name in files:
         assert name in names
+
+
+def test_build_artifacts_pptx_only_when_selected() -> None:
+    assert "presentazione_tutorial.pptx" not in build_artifacts(_data(), "video.mp4", "it", ["procedura"], {}, Logger())
+    files = build_artifacts(_data(), "video.mp4", "it", ["pptx"], {}, Logger())
+    assert files["presentazione_tutorial.pptx"][:2] == b"PK"
+
+
+def test_build_output_zip_contains_pptx_when_selected(tmp_path: Path) -> None:
+    _, zip_bytes = build_output_zip(_data(), "video.mp4", "it", ["pptx"], {}, tmp_path, Logger())
+    assert "presentazione_tutorial.pptx" in zipfile.ZipFile(BytesIO(zip_bytes)).namelist()
