@@ -58,7 +58,7 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
         return
 
     if run.resume_of_run_id:
-        mother = _validate_resume(run, repo)
+        mother = validate_resume(run, repo)
         try:
             input_files = _load_input_files(run, repo)
         except OSError as exc:
@@ -558,7 +558,7 @@ def resume_run_record(
     )
 
 
-def _validate_resume(run: RunRecord, repo: Repository) -> RunRecord:
+def validate_resume(run: RunRecord, repo: Repository) -> RunRecord:
     """Controlla che *run* possa riprendere la run madre; ritorna la madre.
 
     Si riprendono solo le run video FAILED passate dal consolidamento (stesso
