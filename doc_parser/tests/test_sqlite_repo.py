@@ -272,3 +272,18 @@ def test_old_schema_without_resume_column_is_migrated(tmp_path: Path) -> None:
     assert repo.get_run("madre").resume_of_run_id is None
     child = repo.create_run(_run(resume_of_run_id="madre"))
     assert repo.get_run(child.run_id).resume_of_run_id == "madre"
+
+
+def test_get_output_file_reads_what_save_output_file_wrote(repo: SqliteRepository) -> None:
+    repo.save_output_file("run9", "step1_v1.json", b'{"a": 1}')
+    assert repo.get_output_file("run9", "step1_v1.json") == b'{"a": 1}'
+
+
+def test_get_output_file_uses_same_sanitized_name(repo: SqliteRepository) -> None:
+    repo.save_output_file("run9", "nome con/barra?.json", b"x")
+    assert repo.get_output_file("run9", "nome con/barra?.json") == b"x"
+
+
+def test_get_output_file_missing_returns_none(repo: SqliteRepository) -> None:
+    assert repo.get_output_file("run9", "step1_v7.json") is None
+    assert repo.get_output_file("altra-run", "step1_v1.json") is None

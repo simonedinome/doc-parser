@@ -198,10 +198,18 @@ class SqliteRepository(Repository):
     def get_file(self, ref: str) -> bytes:
         return Path(ref).read_bytes()
 
+    def get_output_file(self, run_id: str, filename: str) -> bytes | None:
+        path = self._path(self._outputs_dir, run_id, filename)
+        return path.read_bytes() if path.is_file() else None
+
     def _save(self, directory: Path, run_id: str, filename: str, data: bytes) -> str:
-        path = directory / f"{run_id}_{_sanitize(filename)}"
+        path = self._path(directory, run_id, filename)
         path.write_bytes(data)
         return str(path)
+
+    @staticmethod
+    def _path(directory: Path, run_id: str, filename: str) -> Path:
+        return directory / f"{run_id}_{_sanitize(filename)}"
 
 
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
