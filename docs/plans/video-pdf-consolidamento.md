@@ -170,7 +170,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
       1. con il PDF, ogni chiamata ha 2 allegati (video e `application/pdf`) e `VIDEO_SYSTEM_PROMPT` è un prefisso intatto del prompt di sistema;
       2. senza PDF non c'è addendum;
       3. `git diff --stat` non tocca `video_prompts.py` né `manuale_prompts.py`.
-7. [ ] Task 7 — Consolidamento · 3 h 30 min · dipende da: 3, 6
+7. [x] Task 7 — Consolidamento · 3 h 30 min · dipende da: 3, 6
    1. Nuovi moduli:
       1. `pipeline/consolidation_prompts.py`, con un prompt nuovo e non protetto. Regole essenziali:
          1. unire gli step che descrivono la stessa azione, anche se ripetuti nei ripassi;

@@ -107,9 +107,13 @@ def save_manifest(repo: Repository, run_id: str, descriptors: list[dict], datas:
     return repo.save_input_file(run_id, "manifest.json", json.dumps(manifest, ensure_ascii=False).encode("utf-8"))
 
 
-def load_inputs(run: RunRecord, repo: Repository) -> list[InputFile]:
+def load_inputs(run: RunRecord, repo: Repository, preloaded: list[bytes] | None = None) -> list[InputFile]:
     """Carica gli input della run con i metadati, applicando i default di
-    retrocompatibilità ai manifest che non li hanno."""
+    retrocompatibilità ai manifest che non li hanno.
+
+    *preloaded*: contenuti già letti, nello stesso ordine del manifest, per
+    non tenere due volte in memoria video di grandi dimensioni.
+    """
     if run.input_manifest_ref:
         entries = json.loads(repo.get_file(run.input_manifest_ref).decode("utf-8"))
     elif run.input_path:
@@ -119,9 +123,9 @@ def load_inputs(run: RunRecord, repo: Repository) -> list[InputFile]:
 
     inputs: list[InputFile] = []
     video_index = 0
-    for entry in entries:
+    for position, entry in enumerate(entries):
         filename = entry["filename"]
-        data = repo.get_file(entry["path_ref"])
+        data = preloaded[position] if preloaded is not None else repo.get_file(entry["path_ref"])
         role = entry.get("role") or role_for(filename)
         if role == "slides":
             inputs.append(InputFile(filename, data, entry.get("input_id") or SLIDES_INPUT_ID, "slides"))

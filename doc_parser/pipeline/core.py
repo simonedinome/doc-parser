@@ -27,8 +27,8 @@ from doc_parser.ingestion.extract import LOCAL_EXTRACTION_KINDS, extract_text
 from doc_parser.ingestion.mime import mime_type_for
 from doc_parser.output.assembly import build_output_zip
 from doc_parser.output.logger import Logger
-from doc_parser.pipeline import merger, parser, screenshots
-from doc_parser.pipeline.inputs import InputFile
+from doc_parser.pipeline import consolidation, merger, parser, screenshots
+from doc_parser.pipeline.inputs import InputFile, load_inputs
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.profiles import resolve_profile_prompts
 from doc_parser.pipeline.slides_addendum import apply_slides_addendum, slides_attachments
@@ -208,6 +208,10 @@ def _process_video(
     if content_type not in _VIDEO_CONTENT_TYPES:
         raise GuardrailRejection(f"Tipo di contenuto video non valido: {content_type!r}")
 
+    if content_type == "video" and len(input_files) >= 2:
+        _process_video_consolidated(run, repo, settings, input_files)
+        return
+
     for filename, _ in input_files:
         kind = guardrails.classify_extension(filename)
         if kind != "video":
@@ -277,12 +281,35 @@ def _process_video(
         error_message="; ".join(warnings) if warnings else None,
     )
 
+    step1_cost = step1_snapshot.cost_eur if step1_snapshot else 0.0
+    _finish_video_run(
+        run, repo, settings, merged, raw_json_ref, single_pass_gemini, screenshots_dir,
+        tokens_in_total, tokens_out_total, step1_cost,
+    )
+
+
+def _finish_video_run(
+    run: RunRecord,
+    repo: Repository,
+    settings: Settings,
+    raw_data: dict,
+    raw_json_ref: str,
+    single_pass_gemini: bool,
+    screenshots_dir: Path | None,
+    prior_tokens_in: int,
+    prior_tokens_out: int,
+    prior_cost: float,
+) -> None:
+    """Step 2 (saltato con un Gemini scelto), totali della run, artefatti.
+
+    I totali sommano le fasi già eseguite (*prior_*) e lo step 2.
+    """
     if single_pass_gemini:
-        final_data = merged
+        final_data = raw_data
         final_json_ref = raw_json_ref
         step2_fields: dict = {}
     else:
-        final_data, step2_tokens_in, step2_tokens_out, retry_count = _run_step2(merged, run, settings)
+        final_data, step2_tokens_in, step2_tokens_out, retry_count = _run_step2(raw_data, run, settings)
         final_json_bytes = json.dumps(final_data, ensure_ascii=False, indent=2).encode("utf-8")
         final_json_ref = repo.save_output_file(run.run_id, "final.json", final_json_bytes)
         step2_snapshot = compute_cost(run.model_id, step2_tokens_in, step2_tokens_out, settings.models_file)
@@ -295,9 +322,9 @@ def _process_video(
             retry_count=retry_count,
         )
 
-    total_tokens_in = tokens_in_total + step2_fields.get("step2_tokens_in", 0)
-    total_tokens_out = tokens_out_total + step2_fields.get("step2_tokens_out", 0)
-    total_cost = (step1_snapshot.cost_eur if step1_snapshot else 0.0) + (step2_fields.get("step2_cost_eur") or 0.0)
+    total_tokens_in = prior_tokens_in + step2_fields.get("step2_tokens_in", 0)
+    total_tokens_out = prior_tokens_out + step2_fields.get("step2_tokens_out", 0)
+    total_cost = prior_cost + (step2_fields.get("step2_cost_eur") or 0.0)
 
     repo.update_run(
         run.run_id,
@@ -310,6 +337,147 @@ def _process_video(
     )
     _build_and_persist_output(run, repo, settings, final_data, run.input_filename or "run", screenshots_dir)
     finalize_run(repo, run.run_id, RunStatus.DONE, run.started_at)
+
+
+# --- Percorso video consolidato (più video e/o PDF di slide) ---
+
+
+def _process_video_consolidated(
+    run: RunRecord,
+    repo: Repository,
+    settings: Settings,
+    input_files: list[tuple[str, bytes]],
+) -> None:
+    """Step 1 per ogni video (con il PDF di slide e l'addendum), consolidamento
+    in un unico JSON senza ripetizioni, immagini, step 2, artefatti.
+
+    Costi e token si registrano dopo ogni fase, così anche una run fallita
+    al consolidamento o allo step 2 conta quanto ha già speso.
+    """
+    inputs = load_inputs(run, repo, preloaded=[data for _, data in input_files])
+    videos = [i for i in inputs if i.role == "video"]
+    slides_inputs = [i for i in inputs if i.role == "slides"]
+    if len(slides_inputs) > 1:
+        raise GuardrailRejection("Puoi caricare al massimo un PDF di slide per run: tieni solo il deck della formazione.")
+    if not videos:
+        raise GuardrailRejection("Serve almeno un video: il PDF di slide si usa solo insieme ai video della stessa formazione.")
+    for video in videos:
+        kind = guardrails.classify_extension(video.filename)
+        if kind != "video":
+            raise GuardrailRejection(f"'{video.filename}' non è un video ({kind})")
+    slides = slides_inputs[0] if slides_inputs else None
+    slide_count = guardrails.check_slides_pdf(slides.data, settings.max_pages) if slides else 0
+    if slides:
+        repo.update_run(run.run_id, input_pages=slide_count)
+
+    chosen_model = get_model(settings.models_file, run.model_id) if run.model_id else None
+    single_pass_gemini = chosen_model is not None and chosen_model.backend == "gemini"
+    step1_model_id = run.model_id if single_pass_gemini else _step1_video_model(settings)
+    step1_provider = get_provider_for_model(step1_model_id, settings)
+    screenshots_dir = _screenshots_output_dir(settings, run.run_id)
+    image_warnings: list[str] = []
+
+    with TemporaryDirectory(prefix="doc_parser_video_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        video_paths: dict[str, Path] = {}
+        step1_results: list[tuple[InputFile, dict]] = []
+        step1_tokens_in = step1_tokens_out = 0
+        for video in videos:
+            video_path = tmp_path / f"{video.input_id}_{video.filename}"
+            video_path.write_bytes(video.data)
+            video_paths[video.input_id] = video_path
+
+            system_prompt, user_prompt, attachments = _step1_request("video", run.language, video, slides)
+            raw_text, tokens_in, tokens_out = step1_provider.generate(system_prompt, user_prompt, attachments)
+            step1_tokens_in += tokens_in
+            step1_tokens_out += tokens_out
+            data_dict = consolidation.normalize_step1(parser.parse_response(raw_text, "video"))
+            repo.save_output_file(
+                run.run_id,
+                f"step1_{video.input_id}.json",
+                json.dumps(data_dict, ensure_ascii=False, indent=2).encode("utf-8"),
+            )
+            step1_results.append((video, data_dict))
+
+        step1_snapshot = compute_cost(step1_model_id, step1_tokens_in, step1_tokens_out, settings.models_file)
+        step1_cost = step1_snapshot.cost_eur if step1_snapshot else 0.0
+        repo.update_run(
+            run.run_id,
+            step1_provider=step1_provider.name,
+            step1_model=step1_model_id,
+            step1_tokens_in=step1_tokens_in,
+            step1_tokens_out=step1_tokens_out,
+            step1_cost_eur=step1_snapshot.cost_eur if step1_snapshot else None,
+        )
+        _record_running_totals(repo, run.run_id, step1_tokens_in, step1_tokens_out, step1_cost)
+
+        index = consolidation.build_index(step1_results, slides, slide_count)
+        consolidation_provider = get_provider_for_model(run.model_id, settings)
+        try:
+            consolidated, cons_tokens_in, cons_tokens_out, _ = consolidation.consolidate(
+                consolidation_provider, index, run.language, settings.retry_max_attempts + 1
+            )
+        except consolidation.ConsolidationValidationError as exc:
+            _record_consolidation(
+                repo, run, settings, exc.tokens_in, exc.tokens_out, step1_tokens_in, step1_tokens_out, step1_cost
+            )
+            raise
+        prior_tokens_in, prior_tokens_out, prior_cost = _record_consolidation(
+            repo, run, settings, cons_tokens_in, cons_tokens_out, step1_tokens_in, step1_tokens_out, step1_cost
+        )
+
+    raw_json_bytes = json.dumps(consolidated, ensure_ascii=False, indent=2).encode("utf-8")
+    raw_json_ref = repo.save_output_file(run.run_id, "raw.json", raw_json_bytes)
+    repo.update_run(
+        run.run_id,
+        raw_json_ref=raw_json_ref,
+        screenshots_ref=str(screenshots_dir),
+        error_message="; ".join(image_warnings) if image_warnings else None,
+    )
+
+    _finish_video_run(
+        run, repo, settings, consolidated, raw_json_ref, single_pass_gemini, screenshots_dir,
+        prior_tokens_in, prior_tokens_out, prior_cost,
+    )
+
+
+def _record_consolidation(
+    repo: Repository,
+    run: RunRecord,
+    settings: Settings,
+    tokens_in: int,
+    tokens_out: int,
+    step1_tokens_in: int,
+    step1_tokens_out: int,
+    step1_cost: float,
+) -> tuple[int, int, float]:
+    """Registra costi e token del consolidamento e i totali aggiornati;
+    ritorna i totali (token in, token out, costo) fino a questa fase."""
+    snapshot = compute_cost(run.model_id, tokens_in, tokens_out, settings.models_file)
+    repo.update_run(
+        run.run_id,
+        consolidation_model=run.model_id,
+        consolidation_tokens_in=tokens_in,
+        consolidation_tokens_out=tokens_out,
+        consolidation_cost_eur=snapshot.cost_eur if snapshot else None,
+    )
+    totals = (
+        step1_tokens_in + tokens_in,
+        step1_tokens_out + tokens_out,
+        step1_cost + (snapshot.cost_eur if snapshot else 0.0),
+    )
+    _record_running_totals(repo, run.run_id, *totals)
+    return totals
+
+
+def _record_running_totals(repo: Repository, run_id: str, tokens_in: int, tokens_out: int, cost: float) -> None:
+    repo.update_run(
+        run_id,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        tokens_total=tokens_in + tokens_out,
+        cost_eur=round(cost, 6),
+    )
 
 
 def _step1_request(
