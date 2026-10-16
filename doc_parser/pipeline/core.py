@@ -28,8 +28,10 @@ from doc_parser.ingestion.mime import mime_type_for
 from doc_parser.output.assembly import build_output_zip
 from doc_parser.output.logger import Logger
 from doc_parser.pipeline import merger, parser, screenshots
+from doc_parser.pipeline.inputs import InputFile
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.profiles import resolve_profile_prompts
+from doc_parser.pipeline.slides_addendum import apply_slides_addendum, slides_attachments
 from doc_parser.pipeline.step2_prompts import (
     STEP2_RETRY_FEEDBACK_TEMPLATE,
     STEP2_SYSTEM_PROMPT,
@@ -308,6 +310,26 @@ def _process_video(
     )
     _build_and_persist_output(run, repo, settings, final_data, run.input_filename or "run", screenshots_dir)
     finalize_run(repo, run.run_id, RunStatus.DONE, run.started_at)
+
+
+def _step1_request(
+    content_type: str,
+    language: str,
+    video: InputFile,
+    slides: InputFile | None,
+) -> tuple[str, str, list[Attachment]]:
+    """Prompt e allegati di una chiamata di step 1 su un video della run.
+
+    Con il PDF di slide: addendum appeso ai prompt protetti (mai modificati)
+    e PDF allegato accanto al video. La direttiva di lingua resta l'ultima
+    istruzione di sistema, come nel percorso a video singolo.
+    """
+    system_prompt, user_prompt = resolve_profile_prompts(content_type)
+    attachments = [Attachment(data=video.data, mime_type=mime_type_for(video.filename), filename=video.filename)]
+    if slides is not None:
+        system_prompt, user_prompt = apply_slides_addendum(system_prompt, user_prompt)
+        attachments.extend(slides_attachments(slides.filename, slides.data))
+    return apply_language_directive(system_prompt, language), user_prompt, attachments
 
 
 def _step1_video_model(settings: Settings) -> str:

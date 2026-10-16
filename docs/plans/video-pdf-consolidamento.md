@@ -162,7 +162,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
    3. In `runs.example.yaml` aggiungi l'esempio 4: due webinar, una pillola e un PDF di slide in una sola run.
    4. In `cli/main.py`, l'help di `--output-artifacts` elenca anche `pptx`.
    5. Test: kind non valido, data non valida, esempio YAML caricato correttamente, manifest scritto con i metadati.
-6. [ ] Task 6 — Step 1 con PDF · 1 h · dipende da: 1, 4
+6. [x] Task 6 — Step 1 con PDF · 1 h · dipende da: 1, 4
    1. Nuovo modulo `pipeline/slides_addendum.py` con `apply_slides_addendum(system, user)` e il testo approvato.
    2. Nel nuovo percorso consolidato, ogni chiamata di step 1 riceve video + PDF e l'addendum. Il modello di step 1 segue la logica attuale di `_process_video`: `step1_video_model`, oppure il Gemini scelto se `single_pass_gemini`.
    3. In `pipeline/parser.py`, normalizza `source_slides` in una lista di interi, come già si fa per `source_pages`.
