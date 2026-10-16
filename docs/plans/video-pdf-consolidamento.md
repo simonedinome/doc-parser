@@ -143,7 +143,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
    2. In `storage/sqlite_repo.py`, `_init_schema` legge `PRAGMA table_info(runs)` e lancia `ALTER TABLE runs ADD COLUMN` per ogni colonna mancante, con il tipo da `_column_type`.
    3. In `ui/format.py`, `friendly_row` riceve la colonna "Costo consolidamento (EUR)".
    4. Test: un `runs.db` creato con lo schema vecchio viene aperto da `SqliteRepository`; `create_run` funziona e i nuovi campi fanno il giro completo di scrittura e lettura.
-4. [ ] Task 4 — Modello degli input: guardrail, manifest, loader · 1 h · dipende da: 2
+4. [x] Task 4 — Modello degli input: guardrail, manifest, loader · 1 h · dipende da: 2
    1. In `ingestion/guardrails.py`:
       1. `resolve_input_type(is_video, filenames, allow_slides_pdf=False)` accetta al massimo un PDF, ma solo se `allow_slides_pdf` è vero. Il chiamante lo passa vero solo per il content type `video`.
       2. Serve sempre almeno un video. I messaggi d'errore sono in italiano e dicono cosa fare.
