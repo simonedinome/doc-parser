@@ -276,7 +276,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
     3. `screencast` con più file: merge come oggi (il test esistente resta invariato).
     4. Modello Gemini con consolidamento: niente step 2.
     5. Accettazione: tutti i test verdi.
-14. [ ] Task 14 — Documentazione · 30 min · dipende da: 13
+14. [x] Task 14 — Documentazione · 30 min · dipende da: 13
     1. `README.md`: esempio YAML con video, PDF ed etichette; nuovi output (PPT, sezioni del log).
     2. `RUNBOOK.md`: migrazione automatica del DB; nuovi errori del consolidamento e cosa fare.
 15. [ ] Task 15 — Collaudo con una serie reale (Simone) · 1 h · dipende da: 14

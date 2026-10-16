@@ -72,7 +72,8 @@ Tutto lo stato applicativo vive sotto `data/` (gitignored):
 data/
   runs.db              # SQLite: metadati di tutte le run (UI + CLI)
   inbox/                # file di input caricati (bytes grezzi)
-  outputs/               # blob di output (JSON grezzo/finale, zip, TXT KB densa)
+  outputs/               # blob di output (JSON grezzo/finale, zip, TXT KB densa,
+                         # step1_v{n}.json di ogni video delle serie consolidate)
   screenshots/{run_id}/  # screenshot video / pagine PDF per run
   artifacts/{run_id}/    # procedura.txt, glossario.txt, rag_chunks.jsonl, html, log.txt
   runs_checkpoint.json   # checkpoint della coda CLI (YAML/batch), non della UI
@@ -82,6 +83,15 @@ Per azzerare completamente lo stato (run, log, costi): ferma il processo e
 rimuovi `data/`. Per azzerare solo il checkpoint della CLI (rieseguire da capo
 un batch/coda YAML senza toccare lo storico delle run): rimuovi
 `data/runs_checkpoint.json`.
+
+## Migrazione automatica di `runs.db`
+
+Le colonne aggiunte a `RunRecord` (ad esempio i costi del consolidamento,
+`consolidation_model`/`consolidation_tokens_*`/`consolidation_cost_eur`) vengono
+aggiunte da sole a un `runs.db` esistente all'avvio dell'app o della CLI
+(`ALTER TABLE ... ADD COLUMN` sulle colonne mancanti): nessun intervento manuale,
+lo storico resta intatto e le run vecchie hanno quei campi vuoti. Se UI e CLI
+partono insieme sullo stesso DB, la migrazione concorrente è tollerata.
 
 ## Aggiornare `models.yaml`
 
@@ -98,7 +108,11 @@ la modifica: il file è riletto a ogni run.
 | Sintomo | Causa probabile | Azione |
 |---|---|---|
 | `LibreOffice (soffice) non è installato` su run `.doc` | `soffice` mancante dal `PATH` | Installa LibreOffice (vedi devcontainer/README) |
-| Screenshot mancanti nell'HTML/zip di una run video | `ffmpeg` mancante o video corrotto | Verifica `ffmpeg -version`; controlla `log.txt` nello zip per i warning di clamp-durata |
+| Screenshot mancanti nell'HTML/zip di una run video | `ffmpeg` mancante o video corrotto | Verifica `ffmpeg -version`. Gli avvisi di clamp-durata sono nel campo `error_message` della run (Log tecnico) e, per le serie consolidate, anche nella sezione AVVISI del `log.txt` nello zip |
+| `Il consolidamento non ha prodotto un risultato valido dopo N tentativi: JSON non valido ... troncata` | La serie è troppo lunga per l'output massimo del modello scelto: la risposta si interrompe a metà | Rilancia la serie con un modello con output più lungo, oppure dividila in più run (ad esempio un webinar con le sue pillole). I JSON di step 1 restano in `data/outputs/{run_id}_step1_v*.json`, ma la nuova run rifà lo step 1 |
+| `Il consolidamento non ha prodotto un risultato valido ...: step sorgente non coperti` / `riferimento inesistente` | Il modello ha perso o inventato riferimenti a step dei video anche dopo i retry con feedback | Riprova con un modello più capace; con serie lunghe, dividi la serie |
+| Run rifiutata: `Puoi caricare al massimo un PDF di slide`, `Serve almeno un video`, `PDF di slide di ... MB oltre il limite di 50 MB` | Input della serie non validi | Tieni un solo PDF per run e almeno un video; comprimi il PDF o togli le slide non necessarie |
+| `log.txt` con righe `ATTENZIONE: fonte scartata più recente` | Una pillola (o un webinar più vecchio con data) ha perso contro una fonte con priorità più alta ma più vecchia | Verifica il video al timestamp indicato: se l'interfaccia è cambiata, carica la registrazione aggiornata come webinar o correggi l'etichetta |
 | Run bloccata su "In elaborazione" dopo un crash | Worker interrotto a metà run | Riavvia il processo: `_recover_stale_processing()` la rimette in coda automaticamente |
 | Errore di connessione ai provider (`Connection error.` / `TransientProviderError`) | Rete non raggiungibile verso OpenRouter/Gemini (firewall, proxy, chiave API assente) | Verifica `GEMINI_API_KEY`/`OPENROUTER_API_KEY` in `.env` e la connettività di rete; la run viene ritentata secondo `RETRY_MAX_ATTEMPTS`/`RETRY_BACKOFF_SECONDS` prima di fallire |
 | `Saldo OpenRouter insufficiente... (HTTP 402)` | Credito OpenRouter esaurito (il plugin `file-parser`, usato per i PDF nativi, richiede almeno $0.50 residui) | Ricarica il credito su `https://openrouter.ai/credits`; nessun retry automatico, l'errore è permanente per definizione |

@@ -11,10 +11,11 @@ settings:
   # Tipo di contenuto predefinito: documento | manuale | video | screencast (legacy)
   content_type: video
 
-  # ID modello da models.yaml (usato per lo step 2 video, o per il percorso
-  # single-step dei formati non video). Lo step 1 video resta sempre il
-  # modello fisso di config, salvo quando questo stesso modello è un Gemini:
-  # in quel caso lo step 2 è saltato e si usa direttamente questo modello.
+  # ID modello da models.yaml (usato per lo step 2 video e per il
+  # consolidamento delle serie di video, o per il percorso single-step dei
+  # formati non video). Lo step 1 video resta sempre il modello fisso di
+  # config, salvo quando questo stesso modello è un Gemini: in quel caso lo
+  # step 2 è saltato e si usa direttamente questo modello.
   model_id: anthropic/claude-haiku-4.5
 
   # Lingua dell'output: it | en
