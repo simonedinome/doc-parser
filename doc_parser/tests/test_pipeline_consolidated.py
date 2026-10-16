@@ -381,3 +381,16 @@ def test_log_txt_has_discrepancies_section(monkeypatch, repo, settings) -> None:
     assert "== DISCORDANZE ==" in log_txt
     assert "Fonte tenuta: webinar.mp4 (webinar, registrato il 2026-06-03)" in log_txt
     assert "== SLIDE NON INCLUSE ==" in log_txt and "Slide 1: copertina" in log_txt
+
+
+def test_failed_second_video_keeps_first_video_cost(monkeypatch, repo, settings) -> None:
+    run = consolidated_run(repo, OPENROUTER_MODEL)
+    step1 = FnProvider([WEBINAR_STEP1, ("non è JSON", 700, 50)])
+    patch_providers(monkeypatch, {STEP1_MODEL: step1, OPENROUTER_MODEL: FnProvider([])})
+
+    with pytest.raises(ValueError, match="JSON non valido"):
+        process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    assert updated.step1_tokens_in == 1700  # anche la risposta non valida è stata pagata
+    assert updated.cost_eur == pytest.approx(compute_cost(STEP1_MODEL, 1700, 250, settings.models_file).cost_eur)

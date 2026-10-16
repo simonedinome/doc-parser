@@ -301,3 +301,12 @@ def test_consolidate_fails_with_truncation_hint(index) -> None:
         consolidate(provider, index, "it", max_attempts=2)
 
     assert "non era un JSON valido" in provider.calls[1][1]
+
+
+def test_non_object_items_are_blocking_not_crashing(index) -> None:
+    output = _valid_output()
+    output["procedures"][0]["steps"].append("passo testuale")
+    assert validate(output, index).blocking == ["ogni step deve essere un oggetto JSON"]
+    output = _valid_output()
+    output["glossary"] = ["Tariffa"]
+    assert any("glossario" in b for b in validate(output, index).blocking)

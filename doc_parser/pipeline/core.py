@@ -426,6 +426,19 @@ def _process_video_consolidated(
             raw_text, tokens_in, tokens_out = step1_provider.generate(system_prompt, user_prompt, attachments)
             step1_tokens_in += tokens_in
             step1_tokens_out += tokens_out
+            # Spesa registrata subito: resta anche se questa risposta o un video successivo falliscono.
+            step1_snapshot = compute_cost(step1_model_id, step1_tokens_in, step1_tokens_out, settings.models_file)
+            step1_cost = step1_snapshot.cost_eur if step1_snapshot else 0.0
+            repo.update_run(
+                run.run_id,
+                step1_provider=step1_provider.name,
+                step1_model=step1_model_id,
+                step1_tokens_in=step1_tokens_in,
+                step1_tokens_out=step1_tokens_out,
+                step1_cost_eur=step1_snapshot.cost_eur if step1_snapshot else None,
+            )
+            _record_running_totals(repo, run.run_id, step1_tokens_in, step1_tokens_out, step1_cost)
+
             data_dict = consolidation.normalize_step1(parser.parse_response(raw_text, "video"))
             repo.save_output_file(
                 run.run_id,
@@ -433,18 +446,6 @@ def _process_video_consolidated(
                 json.dumps(data_dict, ensure_ascii=False, indent=2).encode("utf-8"),
             )
             step1_results.append((video, data_dict))
-
-        step1_snapshot = compute_cost(step1_model_id, step1_tokens_in, step1_tokens_out, settings.models_file)
-        step1_cost = step1_snapshot.cost_eur if step1_snapshot else 0.0
-        repo.update_run(
-            run.run_id,
-            step1_provider=step1_provider.name,
-            step1_model=step1_model_id,
-            step1_tokens_in=step1_tokens_in,
-            step1_tokens_out=step1_tokens_out,
-            step1_cost_eur=step1_snapshot.cost_eur if step1_snapshot else None,
-        )
-        _record_running_totals(repo, run.run_id, step1_tokens_in, step1_tokens_out, step1_cost)
 
         index = consolidation.build_index(step1_results, slides, slide_count)
         consolidation_provider = get_provider_for_model(run.model_id, settings)

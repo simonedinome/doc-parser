@@ -265,6 +265,14 @@ def validate(output: dict, index: ConsolidationIndex) -> Validation:
     if not isinstance(concepts, list):
         blocking.append("'concepts' deve essere una lista")
         concepts = []
+    if not all(isinstance(item, dict) for item in concepts + resolved["procedures"]):
+        return Validation(None, ["ogni concetto e ogni procedura deve essere un oggetto JSON"])
+    if any(not isinstance(step, dict) for proc in resolved["procedures"] for step in _as_list(proc.get("steps"))):
+        return Validation(None, ["ogni step deve essere un oggetto JSON"])
+    if isinstance(resolved["glossary"], list) and not all(
+        isinstance(g, dict) and g.get("term") and "definition" in g for g in resolved["glossary"]
+    ):
+        blocking.append("ogni voce del glossario deve avere 'term' e 'definition'")
     resolved["concepts"] = concepts
 
     covered: set[str] = set()
