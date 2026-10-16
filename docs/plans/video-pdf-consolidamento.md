@@ -261,7 +261,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
        4. uno step senza immagine mostra il testo;
        5. le etichette EN sono corrette;
        6. lo zip contiene il PPT solo se richiesto.
-12. [ ] Task 12 — UI Elabora e Guida · 1 h 30 min · dipende da: 4, 11
+12. [x] Task 12 — UI Elabora e Guida · 1 h 30 min · dipende da: 4, 11
     1. In `ui/views/elabora.py`, con content type Video:
        1. per ogni video, caricato o da URL, compaiono un selettore Webinar/Pillola (default Webinar) e `st.date_input` facoltativo con `value=None`;
        2. il manifest viene scritto con i metadati;
