@@ -270,7 +270,7 @@ Errori non bloccanti. Il codice chiede la correzione nei tentativi rimasti; se n
     2. Estrai la costruzione del manifest in una funzione pura, così si può testare.
     3. In `ui/views/guida.py`, aggiungi una sezione su etichette, PDF di slide, priorità, log delle discordanze e PPT.
     4. Test: con `AppTest`, la checkbox PPT appare con Video e non con Documento; test unitario della funzione del manifest.
-13. [ ] Task 13 — Test end-to-end e regressioni · 1 h · dipende da: 5, 9, 10, 11, 12
+13. [x] Task 13 — Test end-to-end e regressioni · 1 h · dipende da: 5, 9, 10, 11, 12
     1. Coda YAML con due webinar, una pillola e un PDF, provider mockati. Lo zip contiene HTML, procedura, glossario, RAG, PPT e `log.txt`, e il log ha la sezione DISCORDANZE.
     2. Video singolo senza PDF: esattamente 1 chiamata di step 1 e 1 di step 2, nessuna di consolidamento.
     3. `screencast` con più file: merge come oggi (il test esistente resta invariato).
