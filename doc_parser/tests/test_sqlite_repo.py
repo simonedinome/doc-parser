@@ -244,3 +244,31 @@ def test_migration_is_idempotent(tmp_path: Path) -> None:
     SqliteRepository(data_dir=data_dir)
     repo = SqliteRepository(data_dir=data_dir)
     assert repo.get_run("vecchia") is not None
+
+
+def test_old_schema_without_resume_column_is_migrated(tmp_path: Path) -> None:
+    import sqlite3
+
+    from doc_parser.storage.sqlite_repo import _COLUMNS, _column_type, _to_row
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True)
+    old_columns = [c for c in _COLUMNS if c != "resume_of_run_id"]
+    columns_sql = ", ".join(
+        f"{name} {'TEXT PRIMARY KEY' if name == 'run_id' else _column_type(name)}" for name in old_columns
+    )
+    conn = sqlite3.connect(data_dir / "runs.db")
+    conn.execute(f"CREATE TABLE runs ({columns_sql})")
+    row = _to_row(_run(run_id="madre"))
+    conn.execute(
+        f"INSERT INTO runs ({', '.join(old_columns)}) VALUES ({', '.join('?' for _ in old_columns)})",
+        [row[c] for c in old_columns],
+    )
+    conn.commit()
+    conn.close()
+
+    repo = SqliteRepository(data_dir=data_dir)
+
+    assert repo.get_run("madre").resume_of_run_id is None
+    child = repo.create_run(_run(resume_of_run_id="madre"))
+    assert repo.get_run(child.run_id).resume_of_run_id == "madre"

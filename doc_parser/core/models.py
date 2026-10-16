@@ -69,6 +69,7 @@ class RunRecord(BaseModel):
     language: str = "it"
     model_id: str | None = None
     parent_run_id: str | None = None
+    resume_of_run_id: str | None = None  # ripresa di una run consolidata fallita (riusa lo step 1)
 
     input_filename: str = ""
     input_hash: str | None = None
