@@ -64,3 +64,37 @@ def test_build_html_toc_tags_both_concepts_and_procedures() -> None:
 def test_build_html_no_toc_tags_when_only_procedures() -> None:
     html = build_html_folder(_data(), {}, "it")
     assert "[Procedura]" not in html
+
+
+def _consolidated_data() -> dict:
+    data = _data()
+    data["procedures"][0]["steps"][0]["source_slides"] = [4, 6]
+    data["concepts"] = [{"id": "con_001", "title": "Concetto X", "content": "C", "source_slides": [2]}]
+    return data
+
+
+def test_build_html_shows_slide_next_to_screenshot(tmp_path: Path) -> None:
+    shot = tmp_path / "proc_001_step_001.png"
+    slide = tmp_path / "proc_001_step_001_slide.png"
+    concept = tmp_path / "con_001_slide.png"
+    for path in (shot, slide, concept):
+        path.write_bytes(b"PNG")
+    html = build_html_folder(
+        _consolidated_data(), {("proc_001", 1): shot}, "it", {("proc_001", 1): slide}, {"con_001": concept}
+    )
+    assert 'class="step-images"' in html
+    assert 'src="screenshots/proc_001_step_001.png"' in html
+    assert 'src="screenshots/proc_001_step_001_slide.png"' in html
+    assert "<figcaption>Slide 4</figcaption>" in html
+    assert 'src="screenshots/con_001_slide.png"' in html and "<figcaption>Slide 2</figcaption>" in html
+    assert "@media (max-width: 700px)" in html
+
+
+def test_build_html_standalone_embeds_both_images(tmp_path: Path) -> None:
+    shot = tmp_path / "proc_001_step_001.png"
+    slide = tmp_path / "proc_001_step_001_slide.png"
+    shot.write_bytes(b"PNG-a")
+    slide.write_bytes(b"PNG-b")
+    html = build_html_standalone(_consolidated_data(), {("proc_001", 1): shot}, "en", {("proc_001", 1): slide})
+    assert html.count("data:image/png;base64,") == 2
+    assert "Slide 4" in html

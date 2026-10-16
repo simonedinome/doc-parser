@@ -34,6 +34,28 @@ _REQUIRED_KEYS_MANUALE: list[str] = [
 ]
 
 
+def normalize_slide_numbers(value) -> list[int]:
+    """Converte un riferimento a slide (lista o valore singolo) in una lista di
+    numeri di pagina interi >= 1, senza duplicati: accetta interi, float
+    interi e stringhe tipo "3" o "Slide 3"; scarta tutto il resto."""
+    items = value if isinstance(value, list) else [value]
+    numbers: list[int] = []
+    for item in items:
+        number: int | None = None
+        if isinstance(item, bool):
+            number = None
+        elif isinstance(item, int):
+            number = item
+        elif isinstance(item, float) and item.is_integer():
+            number = int(item)
+        elif isinstance(item, str):
+            match = re.search(r"\d+", item)
+            number = int(match.group()) if match else None
+        if number is not None and number >= 1 and number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
 def load_json_response(raw: str) -> dict:
     """Rimuove i code fence markdown e carica il JSON, senza validare lo schema
     per content_type: usato per risposte già normalizzate a procedures[] (step 2),
@@ -161,5 +183,7 @@ def parse_response(raw: str, content_type: str = "documento") -> dict:
                 step["source_timestamps"] = []
             if "source_pages" in step and not isinstance(step["source_pages"], list):
                 step["source_pages"] = []
+            if "source_slides" in step:
+                step["source_slides"] = normalize_slide_numbers(step["source_slides"])
 
     return data

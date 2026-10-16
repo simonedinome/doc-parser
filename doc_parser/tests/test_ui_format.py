@@ -113,3 +113,8 @@ def test_cost_summary_windows_excludes_runs_outside_all_windows(repo: SqliteRepo
 
     for _, rows in cost_summary_windows(repo):
         assert rows == []
+
+
+def test_friendly_row_includes_consolidation_cost() -> None:
+    assert friendly_row(_run(consolidation_cost_eur=0.004567))["Costo consolidamento (EUR)"] == "0.0046"
+    assert friendly_row(_run())["Costo consolidamento (EUR)"] == ""

@@ -9,6 +9,7 @@ single-step, coerentemente con doc_parser.pipeline.core.
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -18,6 +19,7 @@ from doc_parser.core.models import RunRecord, RunStatus
 from doc_parser.core.pricing import load_models_config
 from doc_parser.ingestion import guardrails
 from doc_parser.ingestion.downloader import download_url
+from doc_parser.pipeline.inputs import describe_inputs, save_manifest
 from doc_parser.ui.context import get_app_context
 from doc_parser.ui.format import ACTIVE, badge, download_filename, fmt_dt
 
@@ -30,7 +32,31 @@ _ARTIFACT_OPTIONS = [
     ("glossario", "Glossario (glossario.txt)"),
     ("rag_chunks", "Chunk RAG (rag_chunks.jsonl)"),
 ]
+_PPTX_OPTION = ("pptx", "Presentazione tutorial (presentazione_tutorial.pptx)")
 _DEFAULT_ARTIFACTS = {"html_standalone", "procedura", "glossario", "rag_chunks"}
+_KIND_LABELS = {"Webinar": "webinar", "Pillola": "pillola"}
+_GROUP_MODE = "Processa di gruppo"
+_SLIDES_NEED_GROUP = 'Per usare un PDF di slide scegli "Processa di gruppo".'
+
+
+def video_manifest_descriptors(
+    filenames: list[str], metadata: dict[int, tuple[str, date | None]]
+) -> list[dict]:
+    """Descrittori di manifest di un gruppo video, nell'ordine di caricamento.
+
+    *metadata* associa all'indice del file l'etichetta scelta in pagina
+    (Webinar/Pillola) e la data di registrazione facoltativa; i file senza
+    metadati (o il PDF di slide) ricevono i default.
+    """
+    items = []
+    for index, filename in enumerate(filenames):
+        label, recorded_at = metadata.get(index, ("Webinar", None))
+        items.append((filename, _KIND_LABELS[label], recorded_at))
+    return describe_inputs(items)
+
+
+def _is_pdf_name(name: str) -> bool:
+    return Path(name.split("?")[0]).suffix.lower() == ".pdf"
 
 
 def render() -> None:
@@ -51,11 +77,16 @@ def render() -> None:
     is_video = content_choice == "Video"
 
     uploaded = st.file_uploader("File", accept_multiple_files=True)
+    if content_type == "video":
+        st.caption(
+            "Con più video della stessa formazione (webinar e pillole) e, facoltativo, un solo PDF "
+            "con le slide, «Processa di gruppo» produce un unico export senza ripetizioni."
+        )
     url_text = st.text_area("Oppure URL (uno per riga)", placeholder="https://esempio.com/video.mp4")
 
     processing_mode_label = st.radio(
         "Modalità di elaborazione",
-        ["Processa di gruppo", "Processa singolarmente"],
+        [_GROUP_MODE, "Processa singolarmente"],
         help=(
             'Processa di gruppo: "singolo output per tutti i file in input" — i file caricati '
             "vengono uniti in un'unica documentazione.\n\n"
@@ -63,7 +94,12 @@ def render() -> None:
             "una run ed un export separati."
         ),
     )
-    process_as_group = processing_mode_label == "Processa di gruppo"
+    process_as_group = processing_mode_label == _GROUP_MODE
+
+    url_lines = [line.strip() for line in url_text.splitlines() if line.strip()]
+    video_metadata: dict[int, tuple[str, date | None]] = {}
+    if content_type == "video" and process_as_group:
+        video_metadata = _video_metadata_inputs([f.name for f in uploaded or []], url_lines)
 
     models = load_models_config(settings.models_file).models
     model_label = st.selectbox("Modello", [m.label for m in models])
@@ -74,7 +110,8 @@ def render() -> None:
 
     st.caption("File da avere in output")
     selected_artifacts: list[str] = []
-    for key, label in _ARTIFACT_OPTIONS:
+    artifact_options = _ARTIFACT_OPTIONS + ([_PPTX_OPTION] if is_video else [])
+    for key, label in artifact_options:
         if st.checkbox(label, value=key in _DEFAULT_ARTIFACTS, key=f"artifact_{key}"):
             selected_artifacts.append(key)
 
@@ -95,12 +132,37 @@ def render() -> None:
                 model_id,
                 language,
                 selected_artifacts,
+                video_metadata,
             )
 
     run_id = st.session_state.get("last_run_id")
     if run_id:
         st.divider()
         _live_status(run_id)
+
+
+def _video_metadata_inputs(uploaded_names: list[str], url_lines: list[str]) -> dict[int, tuple[str, date | None]]:
+    """Per ogni video del gruppo (caricato o da URL): tipo e data di
+    registrazione facoltativa, usati per la priorità tra le fonti."""
+    entries = [(i, name, f"file_{i}_{name}") for i, name in enumerate(uploaded_names)]
+    entries += [(len(uploaded_names) + j, url, f"url_{j}_{url}") for j, url in enumerate(url_lines)]
+    entries = [entry for entry in entries if not _is_pdf_name(entry[1])]
+    if not entries:
+        return {}
+    st.caption(
+        "Tipo e data di ogni video: in caso di informazioni discordanti vince il webinar, "
+        "poi le slide, poi le pillole; a parità di tipo la registrazione più recente."
+    )
+    metadata: dict[int, tuple[str, date | None]] = {}
+    for index, name, key in entries:
+        col_name, col_kind, col_date = st.columns([3, 2, 2])
+        col_name.markdown(f"`{Path(name).name or name}`")
+        kind = col_kind.selectbox("Tipo", list(_KIND_LABELS), key=f"kind_{key}", label_visibility="collapsed")
+        recorded_at = col_date.date_input(
+            "Data di registrazione", value=None, key=f"date_{key}", format="DD/MM/YYYY", label_visibility="collapsed"
+        )
+        metadata[index] = (kind, recorded_at)
+    return metadata
 
 
 def _submit(
@@ -116,6 +178,7 @@ def _submit(
     model_id: str,
     language: str,
     output_artifacts: list[str],
+    video_metadata: dict[int, tuple[str, date | None]] | None = None,
 ) -> None:
     files: list[tuple[str, bytes]] = [(f.name, f.getvalue()) for f in uploaded]
 
@@ -134,8 +197,13 @@ def _submit(
         st.error("Carica almeno un file o inserisci almeno un URL.")
         return
 
+    allow_slides_pdf = content_type == "video"
+    if allow_slides_pdf and not process_as_group and any(_is_pdf_name(name) for name, _ in files):
+        st.error(_SLIDES_NEED_GROUP)
+        return
+
     try:
-        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files])
+        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files], allow_slides_pdf)
     except Exception as exc:
         st.error(str(exc))
         return
@@ -167,6 +235,10 @@ def _submit(
             filename, data = group[0]
             run.input_size_bytes = len(data)
             run.input_path = repo.save_input_file(run.run_id, filename, data)
+        elif input_type == "video":
+            descriptors = video_manifest_descriptors([name for name, _ in group], video_metadata or {})
+            run.input_size_bytes = sum(len(data) for _, data in group)
+            run.input_manifest_ref = save_manifest(repo, run.run_id, descriptors, [data for _, data in group])
         else:
             manifest = []
             for filename, data in group:

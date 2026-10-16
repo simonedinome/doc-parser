@@ -13,6 +13,7 @@ modalità "KB densa" il TXT a chunk assemblato da doc_parser.core.assembler.
 
 from __future__ import annotations
 
+import copy
 import json
 import shutil
 from pathlib import Path
@@ -26,10 +27,14 @@ from doc_parser.ingestion import guardrails
 from doc_parser.ingestion.extract import LOCAL_EXTRACTION_KINDS, extract_text
 from doc_parser.ingestion.mime import mime_type_for
 from doc_parser.output.assembly import build_output_zip
+from doc_parser.output.consolidation_report import build_consolidation_lines
 from doc_parser.output.logger import Logger
-from doc_parser.pipeline import merger, parser, screenshots
+from doc_parser.output.strings import get_strings
+from doc_parser.pipeline import consolidation, merger, parser, screenshots
+from doc_parser.pipeline.inputs import InputFile, load_inputs
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.profiles import resolve_profile_prompts
+from doc_parser.pipeline.slides_addendum import apply_slides_addendum, slides_attachments
 from doc_parser.pipeline.step2_prompts import (
     STEP2_RETRY_FEEDBACK_TEMPLATE,
     STEP2_SYSTEM_PROMPT,
@@ -43,6 +48,8 @@ from doc_parser.storage.base import Repository
 from doc_parser.worker.processor import finalize_run
 
 _VIDEO_CONTENT_TYPES = {"video", "screencast"}
+_ITEM_PROVENANCE_KEYS = ("sources", "source_slides", "merged_from", "slides")
+_TOP_LEVEL_PROVENANCE_KEYS = ("source_inputs", "consolidation_log")
 
 
 def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
@@ -50,7 +57,17 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
         _process_elaborate_only(run, repo, settings)
         return
 
-    input_files = _load_input_files(run, repo)
+    if run.resume_of_run_id:
+        mother = validate_resume(run, repo)
+        try:
+            input_files = _load_input_files(run, repo)
+        except OSError as exc:
+            raise GuardrailRejection(
+                f"Gli input della run {mother.run_id[:8]} non sono più su disco ({exc}): "
+                "non si può riprendere, avvia una nuova run."
+            ) from exc
+    else:
+        input_files = _load_input_files(run, repo)
     if not input_files:
         raise GuardrailRejection("File di input mancante")
 
@@ -157,6 +174,29 @@ def _reconstruct_screenshot_map(
     return mapping
 
 
+def _reconstruct_slide_map(
+    screenshots_dir: Path | None, procedures: list[dict]
+) -> dict[tuple[str, int], Path]:
+    """Slide secondarie degli step (``{proc_id}_step_{n:03d}_slide.png``)."""
+    if screenshots_dir is None:
+        return {}
+    mapping: dict[tuple[str, int], Path] = {}
+    for proc in procedures:
+        for step in proc.get("steps", []):
+            path = screenshots_dir / f"{proc.get('id')}_step_{step.get('number'):03d}_slide.png"
+            if path.exists():
+                mapping[(proc.get("id"), step.get("number"))] = path
+    return mapping
+
+
+def _reconstruct_concept_image_map(screenshots_dir: Path | None, concepts: list[dict]) -> dict[str, Path]:
+    """Slide dei concetti (``{con_id}_slide.png``)."""
+    if screenshots_dir is None:
+        return {}
+    paths = {con.get("id"): screenshots_dir / f"{con.get('id')}_slide.png" for con in concepts}
+    return {con_id: path for con_id, path in paths.items() if path.exists()}
+
+
 def _build_and_persist_output(
     run: RunRecord,
     repo: Repository,
@@ -169,11 +209,18 @@ def _build_and_persist_output(
     li persiste (cartella + zip). Non usato dalla modalità KB densa, che
     produce già il proprio TXT direttamente in _process_kb_densa."""
     screenshot_map = _reconstruct_screenshot_map(screenshots_dir, final_data.get("procedures", []))
+    slide_map = _reconstruct_slide_map(screenshots_dir, final_data.get("procedures", []))
+    concept_image_map = _reconstruct_concept_image_map(screenshots_dir, final_data.get("concepts", []) or [])
     log = Logger()
     log.log("INFO", f"Run {run.run_id} completata")
+    log.add_block(build_consolidation_lines(final_data, run.language))
     output_artifacts = run.output_artifacts.split(",") if run.output_artifacts else []
+    if "pptx" in output_artifacts and run.input_type != "video":
+        output_artifacts.remove("pptx")
+        log.log("WARN", get_strings(run.language)["pptx_skipped_non_video"])
     files, zip_bytes = build_output_zip(
-        final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log
+        final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log,
+        slide_map=slide_map, concept_image_map=concept_image_map,
     )
 
     artifacts_dir = settings.data_dir / "artifacts" / run.run_id
@@ -205,6 +252,10 @@ def _process_video(
     content_type = run.content_type or "video"
     if content_type not in _VIDEO_CONTENT_TYPES:
         raise GuardrailRejection(f"Tipo di contenuto video non valido: {content_type!r}")
+
+    if content_type == "video" and len(input_files) >= 2:
+        _process_video_consolidated(run, repo, settings, input_files)
+        return
 
     for filename, _ in input_files:
         kind = guardrails.classify_extension(filename)
@@ -275,12 +326,35 @@ def _process_video(
         error_message="; ".join(warnings) if warnings else None,
     )
 
+    step1_cost = step1_snapshot.cost_eur if step1_snapshot else 0.0
+    _finish_video_run(
+        run, repo, settings, merged, raw_json_ref, single_pass_gemini, screenshots_dir,
+        tokens_in_total, tokens_out_total, step1_cost,
+    )
+
+
+def _finish_video_run(
+    run: RunRecord,
+    repo: Repository,
+    settings: Settings,
+    raw_data: dict,
+    raw_json_ref: str,
+    single_pass_gemini: bool,
+    screenshots_dir: Path | None,
+    prior_tokens_in: int,
+    prior_tokens_out: int,
+    prior_cost: float,
+) -> None:
+    """Step 2 (saltato con un Gemini scelto), totali della run, artefatti.
+
+    I totali sommano le fasi già eseguite (*prior_*) e lo step 2.
+    """
     if single_pass_gemini:
-        final_data = merged
+        final_data = raw_data
         final_json_ref = raw_json_ref
         step2_fields: dict = {}
     else:
-        final_data, step2_tokens_in, step2_tokens_out, retry_count = _run_step2(merged, run, settings)
+        final_data, step2_tokens_in, step2_tokens_out, retry_count = _run_step2(raw_data, run, settings)
         final_json_bytes = json.dumps(final_data, ensure_ascii=False, indent=2).encode("utf-8")
         final_json_ref = repo.save_output_file(run.run_id, "final.json", final_json_bytes)
         step2_snapshot = compute_cost(run.model_id, step2_tokens_in, step2_tokens_out, settings.models_file)
@@ -293,9 +367,9 @@ def _process_video(
             retry_count=retry_count,
         )
 
-    total_tokens_in = tokens_in_total + step2_fields.get("step2_tokens_in", 0)
-    total_tokens_out = tokens_out_total + step2_fields.get("step2_tokens_out", 0)
-    total_cost = (step1_snapshot.cost_eur if step1_snapshot else 0.0) + (step2_fields.get("step2_cost_eur") or 0.0)
+    total_tokens_in = prior_tokens_in + step2_fields.get("step2_tokens_in", 0)
+    total_tokens_out = prior_tokens_out + step2_fields.get("step2_tokens_out", 0)
+    total_cost = prior_cost + (step2_fields.get("step2_cost_eur") or 0.0)
 
     repo.update_run(
         run.run_id,
@@ -310,6 +384,305 @@ def _process_video(
     finalize_run(repo, run.run_id, RunStatus.DONE, run.started_at)
 
 
+# --- Percorso video consolidato (più video e/o PDF di slide) ---
+
+
+def _process_video_consolidated(
+    run: RunRecord,
+    repo: Repository,
+    settings: Settings,
+    input_files: list[tuple[str, bytes]],
+) -> None:
+    """Step 1 per ogni video (con il PDF di slide e l'addendum), consolidamento
+    in un unico JSON senza ripetizioni, immagini, step 2, artefatti.
+
+    Costi e token si registrano dopo ogni fase, così anche una run fallita
+    al consolidamento o allo step 2 conta quanto ha già speso.
+    """
+    inputs = load_inputs(run, repo, preloaded=[data for _, data in input_files])
+    videos = [i for i in inputs if i.role == "video"]
+    slides_inputs = [i for i in inputs if i.role == "slides"]
+    if len(slides_inputs) > 1:
+        raise GuardrailRejection("Puoi caricare al massimo un PDF di slide per run: tieni solo il deck della formazione.")
+    if not videos:
+        raise GuardrailRejection("Serve almeno un video: il PDF di slide si usa solo insieme ai video della stessa formazione.")
+    for video in videos:
+        kind = guardrails.classify_extension(video.filename)
+        if kind != "video":
+            raise GuardrailRejection(f"'{video.filename}' non è un video ({kind})")
+    slides = slides_inputs[0] if slides_inputs else None
+    slide_count = guardrails.check_slides_pdf(slides.data, settings.max_pages) if slides else 0
+    if slides:
+        repo.update_run(run.run_id, input_pages=slide_count)
+
+    chosen_model = get_model(settings.models_file, run.model_id) if run.model_id else None
+    single_pass_gemini = chosen_model is not None and chosen_model.backend == "gemini"
+    step1_model_id = run.model_id if single_pass_gemini else _step1_video_model(settings)
+
+    mother = repo.get_run(run.resume_of_run_id) if run.resume_of_run_id else None
+    resume_warnings: list[str] = []
+    resumed: dict[str, dict] = {}
+    if mother is not None:
+        for video in videos:
+            data = _load_resumed_step1(mother.run_id, repo, video, resume_warnings)
+            if data is not None:
+                resumed[video.input_id] = data
+        if mother.step1_model:
+            # Lo step 1 della serie resta omogeneo: i video da rifare usano il modello della madre.
+            step1_model_id = mother.step1_model
+            if len(resumed) < len(videos) and get_model(settings.models_file, step1_model_id) is None:
+                raise GuardrailRejection(
+                    f"Il modello di step 1 della run madre non è più disponibile ({step1_model_id}): "
+                    "avvia una nuova run."
+                )
+        repo.update_run(
+            run.run_id,
+            step1_provider=mother.step1_provider,
+            step1_model=step1_model_id,
+            step1_tokens_in=0,
+            step1_tokens_out=0,
+            step1_cost_eur=0.0,
+        )
+        _record_running_totals(repo, run.run_id, 0, 0, 0.0)
+
+    step1_provider = get_provider_for_model(step1_model_id, settings) if len(resumed) < len(videos) else None
+    screenshots_dir = _screenshots_output_dir(settings, run.run_id)
+    image_warnings: list[str] = []
+
+    with TemporaryDirectory(prefix="doc_parser_video_") as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        video_paths: dict[str, Path] = {}
+        step1_results: list[tuple[InputFile, dict]] = []
+        step1_tokens_in = step1_tokens_out = 0
+        step1_cost = 0.0
+        for video in videos:
+            video_path = tmp_path / f"{video.input_id}_{video.filename}"
+            video_path.write_bytes(video.data)
+            video_paths[video.input_id] = video_path
+
+            if video.input_id in resumed:
+                # Step 1 riusato dalla run madre: nessun costo, copia nella figlia per una futura ripresa.
+                data_dict = resumed[video.input_id]
+                repo.save_output_file(
+                    run.run_id,
+                    f"step1_{video.input_id}.json",
+                    json.dumps(data_dict, ensure_ascii=False, indent=2).encode("utf-8"),
+                )
+                step1_results.append((video, data_dict))
+                continue
+
+            system_prompt, user_prompt, attachments = _step1_request("video", run.language, video, slides)
+            raw_text, tokens_in, tokens_out = step1_provider.generate(system_prompt, user_prompt, attachments)
+            step1_tokens_in += tokens_in
+            step1_tokens_out += tokens_out
+            # Spesa registrata subito: resta anche se questa risposta o un video successivo falliscono.
+            step1_snapshot = compute_cost(step1_model_id, step1_tokens_in, step1_tokens_out, settings.models_file)
+            step1_cost = step1_snapshot.cost_eur if step1_snapshot else 0.0
+            repo.update_run(
+                run.run_id,
+                step1_provider=step1_provider.name,
+                step1_model=step1_model_id,
+                step1_tokens_in=step1_tokens_in,
+                step1_tokens_out=step1_tokens_out,
+                step1_cost_eur=step1_snapshot.cost_eur if step1_snapshot else None,
+            )
+            _record_running_totals(repo, run.run_id, step1_tokens_in, step1_tokens_out, step1_cost)
+
+            data_dict = consolidation.normalize_step1(parser.parse_response(raw_text, "video"))
+            repo.save_output_file(
+                run.run_id,
+                f"step1_{video.input_id}.json",
+                json.dumps(data_dict, ensure_ascii=False, indent=2).encode("utf-8"),
+            )
+            step1_results.append((video, data_dict))
+
+        index = consolidation.build_index(step1_results, slides, slide_count)
+        consolidation_provider = get_provider_for_model(run.model_id, settings)
+        try:
+            consolidated, cons_tokens_in, cons_tokens_out, _ = consolidation.consolidate(
+                consolidation_provider, index, run.language, settings.retry_max_attempts + 1
+            )
+        except consolidation.ConsolidationValidationError as exc:
+            _record_consolidation(
+                repo, run, settings, exc.tokens_in, exc.tokens_out, step1_tokens_in, step1_tokens_out, step1_cost
+            )
+            raise
+        prior_tokens_in, prior_tokens_out, prior_cost = _record_consolidation(
+            repo, run, settings, cons_tokens_in, cons_tokens_out, step1_tokens_in, step1_tokens_out, step1_cost
+        )
+
+        slides_path = None
+        if slides is not None:
+            slides_path = tmp_path / f"{slides.input_id}_{slides.filename}"
+            slides_path.write_bytes(slides.data)
+        screenshots.extract_step_images(
+            consolidated, video_paths, slides_path, screenshots_dir, warn=image_warnings.append
+        )
+        consolidated["consolidation_log"]["warnings"][:0] = resume_warnings
+        consolidated["consolidation_log"]["warnings"].extend(image_warnings)
+
+    raw_json_bytes = json.dumps(consolidated, ensure_ascii=False, indent=2).encode("utf-8")
+    raw_json_ref = repo.save_output_file(run.run_id, "raw.json", raw_json_bytes)
+    repo.update_run(
+        run.run_id,
+        raw_json_ref=raw_json_ref,
+        screenshots_ref=str(screenshots_dir),
+        error_message="; ".join(image_warnings) if image_warnings else None,
+    )
+
+    _finish_video_run(
+        run, repo, settings, consolidated, raw_json_ref, single_pass_gemini, screenshots_dir,
+        prior_tokens_in, prior_tokens_out, prior_cost,
+    )
+
+
+def resume_run_record(
+    mother: RunRecord, model_id: str | None = None, output_artifacts: str | None = None
+) -> RunRecord:
+    """Run figlia che riprende *mother*: stessi input (nessuna copia dei
+    video), content_type, lingua e output_mode; cambiano solo modello e file
+    di output. Richiedente e sessione restano quelli della madre."""
+    return RunRecord(
+        session_id=mother.session_id,
+        requester_upn=mother.requester_upn,
+        input_filename=mother.input_filename,
+        input_type=mother.input_type,
+        input_size_bytes=mother.input_size_bytes,
+        input_manifest_ref=mother.input_manifest_ref,
+        content_type=mother.content_type,
+        language=mother.language,
+        output_mode=mother.output_mode,
+        output_artifacts=output_artifacts or mother.output_artifacts,
+        model_id=model_id or mother.model_id,
+        resume_of_run_id=mother.run_id,
+    )
+
+
+def validate_resume(run: RunRecord, repo: Repository) -> RunRecord:
+    """Controlla che *run* possa riprendere la run madre; ritorna la madre.
+
+    Si riprendono solo le run video FAILED passate dal consolidamento (stesso
+    criterio di _process_video: content_type video e almeno 2 file in input),
+    con gli stessi input, la stessa lingua e lo stesso content_type.
+    """
+    mother = repo.get_run(run.resume_of_run_id)
+    if mother is None:
+        raise GuardrailRejection(f"Run da riprendere {run.resume_of_run_id!r} non trovata.")
+    label = mother.run_id[:8]
+    if mother.input_type != "video":
+        raise GuardrailRejection(
+            f"La run {label} non è una run video: si riprendono solo le serie di video consolidate."
+        )
+    if mother.status != RunStatus.FAILED:
+        raise GuardrailRejection(
+            f"La run {label} è in stato {mother.status.value}: si possono riprendere solo le run fallite."
+        )
+    sources = 0
+    if mother.input_manifest_ref:
+        try:
+            sources = len(json.loads(repo.get_file(mother.input_manifest_ref).decode("utf-8")))
+        except OSError as exc:
+            raise GuardrailRejection(
+                f"Gli input della run {label} non sono più su disco ({exc}): non si può riprendere, avvia una nuova run."
+            ) from exc
+    if (mother.content_type or "video") != "video" or sources < 2:
+        raise GuardrailRejection(
+            f"La run {label} non è passata dal consolidamento (un solo video senza PDF): "
+            "non ha step 1 da riprendere."
+        )
+    if run.language != mother.language:
+        raise GuardrailRejection(
+            f"La lingua della ripresa ({run.language}) è diversa da quella della run {label} "
+            f"({mother.language}): lo step 1 andrebbe rifatto, avvia una nuova run."
+        )
+    if run.content_type != mother.content_type:
+        raise GuardrailRejection(
+            f"Il tipo di contenuto della ripresa ({run.content_type}) è diverso da quello della run {label}."
+        )
+    if run.input_manifest_ref != mother.input_manifest_ref:
+        raise GuardrailRejection(f"La ripresa deve usare gli stessi input della run {label}.")
+    return mother
+
+
+def _load_resumed_step1(
+    mother_run_id: str, repo: Repository, video: InputFile, warnings: list[str]
+) -> dict | None:
+    """JSON di step 1 di *video* salvato dalla run madre, riletto con gli
+    stessi controlli di uno step 1 nuovo; None (con avviso) se manca o non è
+    valido, e lo step 1 di quel video viene rifatto."""
+    label = mother_run_id[:8]
+    raw = repo.get_output_file(mother_run_id, f"step1_{video.input_id}.json")
+    if raw is None:
+        warnings.append(f"Step 1 di {video.input_id} non salvato nella run {label}: rifatto")
+        return None
+    try:
+        data = consolidation.normalize_step1(parser.parse_response(raw.decode("utf-8"), "video"))
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        warnings.append(f"Step 1 di {video.input_id} della run {label} non valido ({exc}): rifatto")
+        return None
+    warnings.append(f"Step 1 di {video.input_id} ripreso dalla run {label}")
+    return data
+
+
+def _record_consolidation(
+    repo: Repository,
+    run: RunRecord,
+    settings: Settings,
+    tokens_in: int,
+    tokens_out: int,
+    step1_tokens_in: int,
+    step1_tokens_out: int,
+    step1_cost: float,
+) -> tuple[int, int, float]:
+    """Registra costi e token del consolidamento e i totali aggiornati;
+    ritorna i totali (token in, token out, costo) fino a questa fase."""
+    snapshot = compute_cost(run.model_id, tokens_in, tokens_out, settings.models_file)
+    repo.update_run(
+        run.run_id,
+        consolidation_model=run.model_id,
+        consolidation_tokens_in=tokens_in,
+        consolidation_tokens_out=tokens_out,
+        consolidation_cost_eur=snapshot.cost_eur if snapshot else None,
+    )
+    totals = (
+        step1_tokens_in + tokens_in,
+        step1_tokens_out + tokens_out,
+        step1_cost + (snapshot.cost_eur if snapshot else 0.0),
+    )
+    _record_running_totals(repo, run.run_id, *totals)
+    return totals
+
+
+def _record_running_totals(repo: Repository, run_id: str, tokens_in: int, tokens_out: int, cost: float) -> None:
+    repo.update_run(
+        run_id,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+        tokens_total=tokens_in + tokens_out,
+        cost_eur=round(cost, 6),
+    )
+
+
+def _step1_request(
+    content_type: str,
+    language: str,
+    video: InputFile,
+    slides: InputFile | None,
+) -> tuple[str, str, list[Attachment]]:
+    """Prompt e allegati di una chiamata di step 1 su un video della run.
+
+    Con il PDF di slide: addendum appeso ai prompt protetti (mai modificati)
+    e PDF allegato accanto al video. La direttiva di lingua resta l'ultima
+    istruzione di sistema, come nel percorso a video singolo.
+    """
+    system_prompt, user_prompt = resolve_profile_prompts(content_type)
+    attachments = [Attachment(data=video.data, mime_type=mime_type_for(video.filename), filename=video.filename)]
+    if slides is not None:
+        system_prompt, user_prompt = apply_slides_addendum(system_prompt, user_prompt)
+        attachments.extend(slides_attachments(slides.filename, slides.data))
+    return apply_language_directive(system_prompt, language), user_prompt, attachments
+
+
 def _step1_video_model(settings: Settings) -> str:
     return load_models_config(settings.models_file).step1_video_model
 
@@ -321,14 +694,19 @@ def _run_step2(
 ) -> tuple[dict, int, int, int]:
     """Esegue lo step 2 con retry-con-feedback in caso di violazione del vincolo.
 
+    La provenienza del JSON consolidato viene tolta prima della chiamata e
+    riattaccata dopo la validazione (vale anche per Rielabora).
+
     Ritorna (dati_riscritti, tokens_in_totali, tokens_out_totali, retry_count).
     Solleva Step2ValidationError se il vincolo è violato anche dopo i retry
     (la run viene marcata FAILED dal worker; il grezzo resta persistito).
     """
     provider = get_provider_for_model(run.model_id, settings)
     system_prompt = apply_language_directive(STEP2_SYSTEM_PROMPT, run.language)
-    raw_json_str = json.dumps(raw_data, ensure_ascii=False, indent=2)
-    user_prompt = STEP2_USER_PROMPT_TEMPLATE.format(raw_json=raw_json_str)
+    stripped, provenance = _split_provenance(raw_data)
+    raw_json_str = json.dumps(stripped, ensure_ascii=False, indent=2)
+    base_prompt = STEP2_USER_PROMPT_TEMPLATE.format(raw_json=raw_json_str)
+    user_prompt = base_prompt
 
     tokens_in_total = tokens_out_total = 0
     last_error: Exception | None = None
@@ -339,15 +717,49 @@ def _run_step2(
         tokens_out_total += tokens_out
         try:
             rewritten = parser.load_json_response(raw_text)
-            validate_step2_output(raw_data, rewritten)
-            return rewritten, tokens_in_total, tokens_out_total, attempt
+            validate_step2_output(stripped, rewritten)
+            return _attach_provenance(rewritten, provenance), tokens_in_total, tokens_out_total, attempt
         except (ValueError, Step2ValidationError) as exc:
             last_error = exc
-            user_prompt = STEP2_RETRY_FEEDBACK_TEMPLATE.format(violation=str(exc))
+            # Il provider è single-turn: il retry rimanda il JSON grezzo insieme al feedback.
+            user_prompt = f"{base_prompt}\n\n{STEP2_RETRY_FEEDBACK_TEMPLATE.format(violation=str(exc))}"
 
     raise Step2ValidationError(
         f"Lo step 2 non ha rispettato il vincolo ID/timestamp dopo {max_attempts} tentativi: {last_error}"
     )
+
+
+def _split_provenance(data: dict) -> tuple[dict, dict]:
+    """Toglie la provenienza calcolata dal codice (fonti, slide, riferimenti,
+    log del consolidamento) prima dello step 2, che non deve né vederla né
+    poterla alterare. Ritorna (json_senza_provenienza, provenienza)."""
+    stripped = copy.deepcopy(data)
+    provenance: dict = {"top": {}, "steps": {}, "concepts": {}}
+    for key in _TOP_LEVEL_PROVENANCE_KEYS:
+        if key in stripped:
+            provenance["top"][key] = stripped.pop(key)
+    for proc in stripped.get("procedures", []) or []:
+        for step in proc.get("steps", []) or []:
+            fields = {key: step.pop(key) for key in _ITEM_PROVENANCE_KEYS if key in step}
+            if fields:
+                provenance["steps"][(proc.get("id"), step.get("number"))] = fields
+    for con in stripped.get("concepts", []) or []:
+        fields = {key: con.pop(key) for key in _ITEM_PROVENANCE_KEYS if key in con}
+        if fields:
+            provenance["concepts"][con.get("id")] = fields
+    return stripped, provenance
+
+
+def _attach_provenance(data: dict, provenance: dict) -> dict:
+    """Riattacca la provenienza per ID di procedura/concetto e numero di step
+    (lo step 2 li preserva per vincolo, verificato da validate_step2_output)."""
+    data.update(provenance["top"])
+    for proc in data.get("procedures", []) or []:
+        for step in proc.get("steps", []) or []:
+            step.update(provenance["steps"].get((proc.get("id"), step.get("number")), {}))
+    for con in data.get("concepts", []) or []:
+        con.update(provenance["concepts"].get(con.get("id"), {}))
+    return data
 
 
 # --- Percorso non-video (single-step) ---

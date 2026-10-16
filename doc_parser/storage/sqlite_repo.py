@@ -45,6 +45,7 @@ class SqliteRepository(Repository):
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(f"CREATE TABLE IF NOT EXISTS runs (\n{columns_sql}\n)")
+            _add_missing_columns(conn)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_input_hash ON runs(input_hash)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, created_at)")
             conn.execute(
@@ -197,10 +198,34 @@ class SqliteRepository(Repository):
     def get_file(self, ref: str) -> bytes:
         return Path(ref).read_bytes()
 
+    def get_output_file(self, run_id: str, filename: str) -> bytes | None:
+        path = self._path(self._outputs_dir, run_id, filename)
+        return path.read_bytes() if path.is_file() else None
+
     def _save(self, directory: Path, run_id: str, filename: str, data: bytes) -> str:
-        path = directory / f"{run_id}_{_sanitize(filename)}"
+        path = self._path(directory, run_id, filename)
         path.write_bytes(data)
         return str(path)
+
+    @staticmethod
+    def _path(directory: Path, run_id: str, filename: str) -> Path:
+        return directory / f"{run_id}_{_sanitize(filename)}"
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Migrazione additiva: un runs.db creato con uno schema precedente riceve
+    le colonne aggiunte nel frattempo a RunRecord (CREATE TABLE IF NOT EXISTS
+    non tocca una tabella già esistente)."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(runs)")}
+    for name in _COLUMNS:
+        if name in existing:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {name} {_column_type(name)}")
+        except sqlite3.OperationalError as exc:
+            # UI e CLI possono migrare lo stesso DB in parallelo.
+            if "duplicate column name" not in str(exc).lower():
+                raise
 
 
 def _column_type(name: str) -> str:

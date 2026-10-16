@@ -105,3 +105,54 @@ def test_elabora_page_content_type_has_documento_manuale_video(app_env) -> None:
     at = _login(at, "utente@demo.local", "demo123!")
     content_type_box = next(sb for sb in at.selectbox if sb.label == "Tipo di contenuto")
     assert content_type_box.options == ["Documento", "Manuale", "Video"]
+
+
+def _content_type_box(at: AppTest):
+    return next(sb for sb in at.selectbox if sb.label == "Tipo di contenuto")
+
+
+def test_elabora_pptx_checkbox_only_for_video_and_off_by_default(app_env) -> None:
+    at = AppTest.from_file(_APP_PATH, default_timeout=30).run()
+    at = _login(at, "utente@demo.local", "demo123!")
+    assert not any("Presentazione tutorial" in cb.label for cb in at.checkbox)
+
+    _content_type_box(at).set_value("Video")
+    at = at.run()
+    assert not at.exception
+    pptx_boxes = [cb for cb in at.checkbox if "Presentazione tutorial" in cb.label]
+    assert len(pptx_boxes) == 1 and pptx_boxes[0].value is False
+
+    _content_type_box(at).set_value("Documento")
+    at = at.run()
+    assert not any("Presentazione tutorial" in cb.label for cb in at.checkbox)
+
+
+def test_elabora_video_urls_get_kind_and_date_inputs(app_env) -> None:
+    at = AppTest.from_file(_APP_PATH, default_timeout=30).run()
+    at = _login(at, "utente@demo.local", "demo123!")
+    _content_type_box(at).set_value("Video")
+    at = at.run()
+    at.text_area[0].set_value("https://esempio.com/webinar.mp4\nhttps://esempio.com/pillola.mp4\nhttps://esempio.com/slide.pdf")
+    at = at.run()
+    assert not at.exception
+    kind_boxes = [sb for sb in at.selectbox if sb.label == "Tipo"]
+    assert len(kind_boxes) == 2  # nessun selettore per il PDF di slide
+    assert all(sb.value == "Webinar" for sb in kind_boxes)
+    assert len([d for d in at.date_input if d.label == "Data di registrazione"]) == 2
+
+
+def test_video_manifest_descriptors_maps_labels_and_dates() -> None:
+    from datetime import date
+
+    from doc_parser.ui.views.elabora import video_manifest_descriptors
+
+    descriptors = video_manifest_descriptors(
+        ["w.mp4", "p.mp4", "deck.pdf", "w2.mp4"],
+        {0: ("Webinar", date(2026, 6, 3)), 1: ("Pillola", None), 3: ("Webinar", None)},
+    )
+    assert [(d["input_id"], d["role"], d.get("kind"), d.get("recorded_at")) for d in descriptors] == [
+        ("v1", "video", "webinar", "2026-06-03"),
+        ("v2", "video", "pillola", None),
+        ("pdf", "slides", None, None),
+        ("v3", "video", "webinar", None),
+    ]

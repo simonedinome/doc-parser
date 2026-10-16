@@ -69,6 +69,7 @@ class RunRecord(BaseModel):
     language: str = "it"
     model_id: str | None = None
     parent_run_id: str | None = None
+    resume_of_run_id: str | None = None  # ripresa di una run consolidata fallita (riusa lo step 1)
 
     input_filename: str = ""
     input_hash: str | None = None
@@ -106,6 +107,11 @@ class RunRecord(BaseModel):
     step2_tokens_in: int | None = None
     step2_tokens_out: int | None = None
     step2_cost_eur: float | None = None
+
+    consolidation_model: str | None = None
+    consolidation_tokens_in: int | None = None
+    consolidation_tokens_out: int | None = None
+    consolidation_cost_eur: float | None = None
 
     chunk_count: int | None = None
     uncertainty_count: int | None = None

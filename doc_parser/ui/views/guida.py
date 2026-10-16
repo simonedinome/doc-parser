@@ -47,6 +47,8 @@ avvia l'elaborazione.
    - Procedura (`procedura.txt`)
    - Glossario (`glossario.txt`)
    - Chunk RAG (`rag_chunks.jsonl`)
+   - Presentazione tutorial (`presentazione_tutorial.pptx`), solo per i video,
+     spenta di default
 
    Deve essere selezionato almeno un file di output.
 7. Premi **Avvia elaborazione**. L'elaborazione parte in background: puoi
@@ -55,6 +57,40 @@ avvia l'elaborazione.
 8. Quando la run è completata compare il pulsante **Scarica**. Se il
    documento risulta un duplicato di una richiesta precedente, l'output
    viene riutilizzato senza rielaborazione (nessun costo aggiuntivo).
+            """
+        )
+
+    with st.expander("🎬 Video — serie di formazione, slide e presentazione"):
+        st.markdown(
+            """
+Con il tipo di contenuto **Video** e la modalità **Processa di gruppo** puoi
+caricare più video della stessa formazione e, facoltativamente, **un solo PDF
+con le slide**. Ne esce un unico export: le procedure ripetute nei vari video
+(o nei ripassi dello stesso video) vengono unite una volta sola, e le slide che
+i video non trattano diventano procedure o concetti.
+
+1. **Etichette** — per ogni video scegli *Webinar* (predefinito) o *Pillola*
+   e, se la conosci, la **data di registrazione**.
+2. **PDF di slide** — al massimo uno per run, non cifrato, entro 50 MB e
+   entro il limite di pagine. Serve sempre almeno un video. In *Processa
+   singolarmente* il PDF non è ammesso.
+3. **Priorità** — se le fonti si contraddicono vince il **webinar**, poi le
+   **slide**, poi le **pillole**. A parità di tipo vince la registrazione più
+   recente; i video con data vengono prima di quelli senza; a parità vince
+   l'ultimo caricato (prima i file, poi gli URL, nell'ordine inserito).
+4. **Log delle discordanze** — il `log.txt` nello ZIP elenca le fonti, ogni
+   discordanza risolta (fonte tenuta e fonti scartate con file, tipo, data,
+   timestamp o numero di slide, motivo), i contenuti scartati, le slide non
+   incluse e gli avvisi. Una riga che inizia con **ATTENZIONE** indica che è
+   stata scartata una fonte più recente: conviene verificarla aprendo il
+   video al timestamp indicato.
+5. **Presentazione tutorial** — la casella *Presentazione tutorial* produce
+   un PowerPoint 16:9 da proiettare: una slide per concetto e per step, con
+   l'immagine dello step (fotogramma o slide) o il testo. Testo completo e
+   fonte di ogni step sono nelle note del relatore.
+6. **Costi** — una serie costa lo step 1 di ogni video, più il
+   consolidamento e la riscrittura con il modello scelto: il dettaglio è
+   nelle colonne di costo di «Le mie richieste».
             """
         )
 
@@ -75,7 +111,9 @@ Elenca tutte le run avviate dall'utente collegato.
 - **Rielabora** — per le run video completate è possibile rigenerare solo lo
   step 2 (la riscrittura finale) con un modello diverso, riusando il JSON
   grezzo e gli screenshot già estratti in precedenza: nessun nuovo costo di
-  estrazione, solo il costo della riscrittura con il nuovo modello.
+  estrazione, solo il costo della riscrittura con il nuovo modello. Per le
+  serie di video consolidate restano anche immagini, fonti e log delle
+  discordanze.
             """
         )
 

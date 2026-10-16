@@ -156,3 +156,53 @@ def test_run_queue_multiple_runs_in_parallel(monkeypatch, tmp_path, settings) ->
     checkpoint = run_queue(config, settings, checkpoint_path=tmp_path / "checkpoint.json")
 
     assert set(checkpoint["completed_runs"]) == {"run-a", "run-b"}
+
+
+class _NoopWorker:
+    def process_run(self, run) -> None:
+        pass
+
+
+def test_process_run_config_writes_manifest_with_metadata(tmp_path, settings) -> None:
+    from doc_parser.cli.queue_runner import _process_run_config
+
+    webinar = _video_file(tmp_path, "webinar.mp4")
+    pillola = _video_file(tmp_path, "pillola.mp4")
+    slides = tmp_path / "slide.pdf"
+    slides.write_bytes(b"%PDF-1.4 finto")
+    run_config = RunConfig(
+        name="serie",
+        inputs=[
+            InputSource(source="file", path=str(webinar), kind="webinar", recorded_at="2026-06-03"),
+            InputSource(source="file", path=str(pillola), kind="pillola"),
+            InputSource(source="file", path=str(slides)),
+        ],
+    )
+    repo = SqliteRepository(data_dir=settings.data_dir)
+
+    run = _process_run_config(
+        run_config, GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL), repo, _NoopWorker(), settings
+    )
+
+    assert run.input_type == "video"
+    manifest = json.loads(repo.get_file(run.input_manifest_ref))
+    assert [(e["input_id"], e["role"], e.get("kind"), e.get("recorded_at")) for e in manifest] == [
+        ("v1", "video", "webinar", "2026-06-03"),
+        ("v2", "video", "pillola", None),
+        ("pdf", "slides", None, None),
+    ]
+    assert repo.get_file(manifest[2]["path_ref"]) == b"%PDF-1.4 finto"
+
+
+def test_process_run_config_rejects_pdf_for_screencast(tmp_path, settings) -> None:
+    from doc_parser.cli.queue_runner import _process_run_config
+    from doc_parser.core.errors import GuardrailRejection
+
+    video = _video_file(tmp_path)
+    slides = tmp_path / "slide.pdf"
+    slides.write_bytes(b"%PDF-1.4")
+    run_config = RunConfig(name="r", inputs=[InputSource(source="file", path=str(video)), InputSource(source="file", path=str(slides))])
+    repo = SqliteRepository(data_dir=settings.data_dir)
+
+    with pytest.raises(GuardrailRejection, match="non è un video"):
+        _process_run_config(run_config, GlobalSettings(content_type="screencast"), repo, _NoopWorker(), settings)

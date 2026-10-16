@@ -11,10 +11,11 @@ settings:
   # Tipo di contenuto predefinito: documento | manuale | video | screencast (legacy)
   content_type: video
 
-  # ID modello da models.yaml (usato per lo step 2 video, o per il percorso
-  # single-step dei formati non video). Lo step 1 video resta sempre il
-  # modello fisso di config, salvo quando questo stesso modello è un Gemini:
-  # in quel caso lo step 2 è saltato e si usa direttamente questo modello.
+  # ID modello da models.yaml (usato per lo step 2 video e per il
+  # consolidamento delle serie di video, o per il percorso single-step dei
+  # formati non video). Lo step 1 video resta sempre il modello fisso di
+  # config, salvo quando questo stesso modello è un Gemini: in quel caso lo
+  # step 2 è saltato e si usa direttamente questo modello.
   model_id: anthropic/claude-haiku-4.5
 
   # Lingua dell'output: it | en
@@ -24,7 +25,7 @@ settings:
   output_mode: documentazione
 
   # File da avere in output, separati da virgola: html_standalone | html_folder |
-  # procedura | glossario | rag_chunks
+  # procedura | glossario | rag_chunks | pptx (presentazione tutorial, solo video)
   output_artifacts: html_standalone,procedura,glossario,rag_chunks
 
   # Numero massimo di run eseguite in parallelo
@@ -34,8 +35,8 @@ settings:
   requester_upn: cli@local
 
 runs:
-  # Esempio 1 — video locali multipli, uniti in un unico export (merge
-  # implicito quando una run ha più di un input video)
+  # Esempio 1 — video locali multipli, consolidati in un unico export
+  # deduplicato (con content_type video; con screencast restano concatenati)
   - name: onboarding-crm
     inputs:
       - source: file       # "file" = locale
@@ -64,3 +65,33 @@ runs:
     settings:
       content_type: documento
       output_mode: kb_densa
+
+  # Esempio 4 — serie di formazione: due webinar, una pillola e il PDF delle
+  # slide in una sola run. I video vengono deduplicati in un unico export; le
+  # discordanze si risolvono con la priorità webinar > slide > pillola e sono
+  # elencate nel log.txt. kind: webinar | pillola (default webinar);
+  # recorded_at: data di registrazione AAAA-MM-GG, facoltativa (a parità di tipo
+  # vince la registrazione più recente).
+  - name: formazione-gestionale
+    inputs:
+      - source: file
+        order: 1
+        path: input/webinar_giugno.mp4
+        kind: webinar
+        recorded_at: 2026-06-03
+      - source: file
+        order: 2
+        path: input/webinar_luglio.mp4
+        kind: webinar
+        recorded_at: 2026-07-08
+      - source: file
+        order: 3
+        path: input/pillola_settembre.mp4
+        kind: pillola
+        recorded_at: 2026-09-12
+      - source: file
+        order: 4
+        path: input/slide_formazione.pdf   # al massimo un PDF di slide per run
+    settings:
+      content_type: video
+      output_artifacts: html_standalone,procedura,glossario,rag_chunks,pptx
