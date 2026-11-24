@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from doc_parser.output.html_builder import build_html_folder, build_html_standalone
+from doc_parser.output.kb_builder import build_kb_txt
 from doc_parser.output.logger import Logger, build_log_txt
 from doc_parser.output.pptx_builder import build_pptx
 from doc_parser.output.rag_builder import build_rag_jsonl
@@ -18,6 +19,7 @@ from doc_parser.output.zipper import create_zip
 HTML_FILENAME_FOLDER = "documentazione.html"
 HTML_FILENAME_STANDALONE = "documentazione_standalone.html"
 PPTX_FILENAME = "presentazione_tutorial.pptx"
+KB_DEFAULT_FILENAME = "knowledge_base.txt"
 
 
 def build_artifacts(
@@ -29,10 +31,13 @@ def build_artifacts(
     log: Logger,
     slide_map: dict[tuple[str, int], Path] | None = None,
     concept_image_map: dict[str, Path] | None = None,
+    kb_filename: str | None = None,
 ) -> dict[str, bytes]:
     """Ritorna ``{nome_file: contenuto}`` solo per gli artefatti selezionati
     dall'utente in ``output_artifacts`` (chiavi: ``procedura``, ``glossario``,
-    ``rag_chunks``, ``html_standalone``, ``html_folder``, ``pptx``)."""
+    ``rag_chunks``, ``html_standalone``, ``html_folder``, ``pptx``, ``kb``).
+
+    Il TXT KB prende il nome *kb_filename* (nome della run con data e ora)."""
     files: dict[str, bytes] = {}
     if "procedura" in output_artifacts:
         files["procedura.txt"] = build_procedura(data, source_filename, language).encode("utf-8")
@@ -50,6 +55,8 @@ def build_artifacts(
         ).encode("utf-8")
     if "pptx" in output_artifacts:
         files[PPTX_FILENAME] = build_pptx(data, screenshot_map, concept_image_map, language)
+    if "kb" in output_artifacts:
+        files[kb_filename or KB_DEFAULT_FILENAME] = build_kb_txt(data, language).encode("utf-8")
     files["log.txt"] = build_log_txt(log.lines, language).encode("utf-8")
     return files
 
@@ -64,13 +71,15 @@ def build_output_zip(
     log: Logger,
     slide_map: dict[tuple[str, int], Path] | None = None,
     concept_image_map: dict[str, Path] | None = None,
+    kb_filename: str | None = None,
 ) -> tuple[dict[str, bytes], bytes]:
     """Costruisce gli artefatti e lo ZIP che li impacchetta.
 
     Ritorna (artefatti, zip_bytes).
     """
     files = build_artifacts(
-        data, source_filename, language, output_artifacts, screenshot_map, log, slide_map, concept_image_map
+        data, source_filename, language, output_artifacts, screenshot_map, log, slide_map, concept_image_map,
+        kb_filename=kb_filename,
     )
     zip_bytes = create_zip(files, screenshots_dir, output_artifacts)
     return files, zip_bytes

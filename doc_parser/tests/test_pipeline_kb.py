@@ -142,3 +142,44 @@ def test_resume_with_kb_redoes_step1_extracted_without_kb(monkeypatch, repo, set
     assert len(step1.calls) == 2
     final = json.loads(repo.get_file(updated.final_json_ref))
     assert final["qa"][0]["question"] == _QA_WEBINAR["question"]
+
+
+def test_kb_txt_and_named_folder(monkeypatch, repo, settings) -> None:
+    from pathlib import Path
+
+    run, _, _ = _run_kb_series(monkeypatch, repo, settings)
+
+    folder = Path(run.output_dir_ref)
+    assert folder.parent == settings.data_dir / "artifacts"
+    assert folder.name.startswith("serie_") and run.run_id not in folder.name
+    kb_files = list(folder.glob("serie_*.txt"))
+    assert [f.stem for f in kb_files] == [folder.name]
+    text = kb_files[0].read_text(encoding="utf-8")
+    assert f"Risposta: {_QA_WEBINAR['answer']}" in text
+    assert "### Concetto: Tariffe" in text
+    assert "webinar.mp4" not in text
+
+
+def test_same_name_rerun_does_not_overwrite_previous_folder(monkeypatch, repo, settings) -> None:
+    from pathlib import Path
+
+    first, _, _ = _run_kb_series(monkeypatch, repo, settings)
+    second, _, _ = _run_kb_series(monkeypatch, repo, settings)
+
+    assert first.output_dir_ref != second.output_dir_ref
+    assert Path(first.output_dir_ref).exists() and any(Path(first.output_dir_ref).iterdir())
+    assert Path(second.output_dir_ref).name.startswith(Path(first.output_dir_ref).name)
+
+
+def test_run_without_kb_has_no_kb_txt(monkeypatch, repo, settings) -> None:
+    from pathlib import Path
+
+    run = consolidated_run(repo, OPENROUTER_MODEL, output_artifacts="procedura")
+    patch_providers(monkeypatch, {
+        STEP1_MODEL: FnProvider([WEBINAR_STEP1, PILLOLA_STEP1]),
+        OPENROUTER_MODEL: FnProvider([consolidation_response(), step2_echo()]),
+    })
+    process_run(run, repo, settings)
+
+    files = sorted(p.name for p in Path(repo.get_run(run.run_id).output_dir_ref).iterdir())
+    assert files == ["log.txt", "procedura.txt"]

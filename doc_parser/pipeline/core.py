@@ -29,6 +29,7 @@ from doc_parser.ingestion.mime import mime_type_for
 from doc_parser.output.assembly import build_output_zip
 from doc_parser.output.consolidation_report import build_consolidation_lines
 from doc_parser.output.logger import Logger
+from doc_parser.output.naming import run_label, run_timestamp, unique_dir
 from doc_parser.output.strings import get_strings
 from doc_parser.pipeline import consolidation, merger, parser, screenshots
 from doc_parser.pipeline.inputs import InputFile, load_inputs
@@ -227,14 +228,14 @@ def _build_and_persist_output(
     if "pptx" in output_artifacts and run.input_type != "video":
         output_artifacts.remove("pptx")
         log.log("WARN", get_strings(run.language)["pptx_skipped_non_video"])
+    stored = repo.get_run(run.run_id)
+    name = f"{run_label(run.session_id, source_filename, final_data.get('title'))}_{run_timestamp(stored.started_at or stored.created_at)}"
     files, zip_bytes = build_output_zip(
         final_data, source_filename, run.language, output_artifacts, screenshot_map, screenshots_dir, log,
-        slide_map=slide_map, concept_image_map=concept_image_map,
+        slide_map=slide_map, concept_image_map=concept_image_map, kb_filename=f"{name}.txt",
     )
 
-    artifacts_dir = settings.data_dir / "artifacts" / run.run_id
-    if artifacts_dir.exists():
-        shutil.rmtree(artifacts_dir)
+    artifacts_dir = _artifacts_dir(settings, stored.output_dir_ref, name)
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     for name, content in files.items():
         (artifacts_dir / name).write_bytes(content)
@@ -247,6 +248,22 @@ def _build_and_persist_output(
         output_path=zip_ref,
         output_size_bytes=len(zip_bytes),
     )
+
+
+def _artifacts_dir(settings: Settings, previous_ref: str | None, name: str) -> Path:
+    """Cartella degli artefatti, con il nome della run al posto del codice.
+
+    Una run rielaborata riusa (svuotata) la propria cartella; per il resto la
+    cartella è sempre nuova (suffisso _2, _3… se il nome esiste già), così
+    non si cancellano mai gli output di un'altra run.
+    """
+    base = settings.data_dir / "artifacts"
+    if previous_ref:
+        previous = Path(previous_ref)
+        if previous.parent == base and previous.exists():
+            shutil.rmtree(previous)
+            return previous
+    return unique_dir(base, name)
 
 
 # --- Percorso video (two-step) ---
