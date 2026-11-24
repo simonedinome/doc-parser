@@ -32,6 +32,7 @@ from doc_parser.output.logger import Logger
 from doc_parser.output.strings import get_strings
 from doc_parser.pipeline import consolidation, merger, parser, screenshots
 from doc_parser.pipeline.inputs import InputFile, load_inputs
+from doc_parser.pipeline.kb_addendum import apply_kb_addendum, kb_requested, mark_kb_extraction
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.profiles import resolve_profile_prompts
 from doc_parser.pipeline.slides_addendum import apply_slides_addendum, slides_attachments
@@ -262,7 +263,10 @@ def _process_video(
         if kind != "video":
             raise GuardrailRejection(f"'{filename}' non è un video ({kind})")
 
+    kb = kb_requested(run.output_artifacts)
     system_prompt, user_prompt = resolve_profile_prompts(content_type)
+    if kb:
+        system_prompt, user_prompt = apply_kb_addendum(system_prompt, user_prompt, content_type)
     system_prompt = apply_language_directive(system_prompt, run.language)
 
     chosen_model = get_model(settings.models_file, run.model_id) if run.model_id else None
@@ -297,6 +301,8 @@ def _process_video(
             if len(results) > 1
             else results[0][0]
         )
+        if kb:
+            mark_kb_extraction(merged)
 
         offset = 0
         for (data_dict, _), video_path in zip(results, video_paths):
@@ -399,6 +405,7 @@ def _process_video_consolidated(
     Costi e token si registrano dopo ogni fase, così anche una run fallita
     al consolidamento o allo step 2 conta quanto ha già speso.
     """
+    kb = kb_requested(run.output_artifacts)
     inputs = load_inputs(run, repo, preloaded=[data for _, data in input_files])
     videos = [i for i in inputs if i.role == "video"]
     slides_inputs = [i for i in inputs if i.role == "slides"]
@@ -471,7 +478,7 @@ def _process_video_consolidated(
                 step1_results.append((video, data_dict))
                 continue
 
-            system_prompt, user_prompt, attachments = _step1_request("video", run.language, video, slides)
+            system_prompt, user_prompt, attachments = _step1_request("video", run.language, video, slides, kb)
             raw_text, tokens_in, tokens_out = step1_provider.generate(system_prompt, user_prompt, attachments)
             step1_tokens_in += tokens_in
             step1_tokens_out += tokens_out
@@ -489,6 +496,8 @@ def _process_video_consolidated(
             _record_running_totals(repo, run.run_id, step1_tokens_in, step1_tokens_out, step1_cost)
 
             data_dict = consolidation.normalize_step1(parser.parse_response(raw_text, "video"))
+            if kb:
+                mark_kb_extraction(data_dict)
             repo.save_output_file(
                 run.run_id,
                 f"step1_{video.input_id}.json",
@@ -668,6 +677,7 @@ def _step1_request(
     language: str,
     video: InputFile,
     slides: InputFile | None,
+    kb: bool = False,
 ) -> tuple[str, str, list[Attachment]]:
     """Prompt e allegati di una chiamata di step 1 su un video della run.
 
@@ -680,6 +690,8 @@ def _step1_request(
     if slides is not None:
         system_prompt, user_prompt = apply_slides_addendum(system_prompt, user_prompt)
         attachments.extend(slides_attachments(slides.filename, slides.data))
+    if kb:
+        system_prompt, user_prompt = apply_kb_addendum(system_prompt, user_prompt, content_type)
     return apply_language_directive(system_prompt, language), user_prompt, attachments
 
 
@@ -794,7 +806,10 @@ def _process_document(
                 raise GuardrailRejection("Il profilo 'manuale' accetta solo PDF")
 
     provider = get_provider_for_model(run.model_id, settings)
+    kb = kb_requested(run.output_artifacts)
     system_prompt, user_prompt_base = resolve_profile_prompts(content_type)
+    if kb:
+        system_prompt, user_prompt_base = apply_kb_addendum(system_prompt, user_prompt_base, content_type)
     system_prompt = apply_language_directive(system_prompt, run.language)
 
     results: list[tuple[dict, str]] = []
@@ -832,6 +847,8 @@ def _process_document(
             if len(results) > 1
             else results[0][0]
         )
+        if kb:
+            mark_kb_extraction(merged)
 
         screenshots_dir: Path | None = None
         if pdf_files:
@@ -872,12 +889,17 @@ def _process_images(
         Attachment(data=data, mime_type=mime_type_for(filename), filename=filename)
         for filename, data in input_files
     ]
+    kb = kb_requested(run.output_artifacts)
     system_prompt, user_prompt = resolve_profile_prompts("documento")
+    if kb:
+        system_prompt, user_prompt = apply_kb_addendum(system_prompt, user_prompt, "documento")
     system_prompt = apply_language_directive(system_prompt, run.language)
 
     provider = get_provider_for_model(run.model_id, settings)
     raw_text, tokens_in, tokens_out = provider.generate(system_prompt, user_prompt, attachments)
     data_dict = parser.parse_response(raw_text, "documento")
+    if kb:
+        mark_kb_extraction(data_dict)
 
     source_filename = run.input_filename or input_files[0][0]
     _finalize_single_step(run, repo, settings, provider, data_dict, tokens_in, tokens_out, source_filename, None)
