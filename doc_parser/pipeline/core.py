@@ -32,7 +32,13 @@ from doc_parser.output.logger import Logger
 from doc_parser.output.strings import get_strings
 from doc_parser.pipeline import consolidation, merger, parser, screenshots
 from doc_parser.pipeline.inputs import InputFile, load_inputs
-from doc_parser.pipeline.kb_addendum import apply_kb_addendum, kb_requested, mark_kb_extraction
+from doc_parser.pipeline.kb_addendum import (
+    KB_MARKER,
+    apply_kb_addendum,
+    has_kb_extraction,
+    kb_requested,
+    mark_kb_extraction,
+)
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.profiles import resolve_profile_prompts
 from doc_parser.pipeline.slides_addendum import apply_slides_addendum, slides_attachments
@@ -50,7 +56,9 @@ from doc_parser.worker.processor import finalize_run
 
 _VIDEO_CONTENT_TYPES = {"video", "screencast"}
 _ITEM_PROVENANCE_KEYS = ("sources", "source_slides", "merged_from", "slides")
-_TOP_LEVEL_PROVENANCE_KEYS = ("source_inputs", "consolidation_log")
+# Tolte prima dello step 2 e riattaccate dopo: lo step 2 non le vede e non può alterarle
+# (le Q&A del KB restano integre, senza vincoli di validazione in più).
+_TOP_LEVEL_PROVENANCE_KEYS = ("source_inputs", "consolidation_log", "qa", KB_MARKER)
 
 
 def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
@@ -431,7 +439,7 @@ def _process_video_consolidated(
     resumed: dict[str, dict] = {}
     if mother is not None:
         for video in videos:
-            data = _load_resumed_step1(mother.run_id, repo, video, resume_warnings)
+            data = _load_resumed_step1(mother.run_id, repo, video, resume_warnings, kb)
             if data is not None:
                 resumed[video.input_id] = data
         if mother.step1_model:
@@ -614,11 +622,12 @@ def validate_resume(run: RunRecord, repo: Repository) -> RunRecord:
 
 
 def _load_resumed_step1(
-    mother_run_id: str, repo: Repository, video: InputFile, warnings: list[str]
+    mother_run_id: str, repo: Repository, video: InputFile, warnings: list[str], kb: bool = False
 ) -> dict | None:
     """JSON di step 1 di *video* salvato dalla run madre, riletto con gli
     stessi controlli di uno step 1 nuovo; None (con avviso) se manca o non è
-    valido, e lo step 1 di quel video viene rifatto."""
+    valido, e lo step 1 di quel video viene rifatto. Con il KB richiesto si
+    rifà anche uno step 1 estratto senza concetti e Q&A."""
     label = mother_run_id[:8]
     raw = repo.get_output_file(mother_run_id, f"step1_{video.input_id}.json")
     if raw is None:
@@ -628,6 +637,9 @@ def _load_resumed_step1(
         data = consolidation.normalize_step1(parser.parse_response(raw.decode("utf-8"), "video"))
     except (ValueError, TypeError, AttributeError, KeyError) as exc:
         warnings.append(f"Step 1 di {video.input_id} della run {label} non valido ({exc}): rifatto")
+        return None
+    if kb and not has_kb_extraction(data):
+        warnings.append(f"Step 1 di {video.input_id} della run {label} estratto senza il KB (concetti e Q&A): rifatto")
         return None
     warnings.append(f"Step 1 di {video.input_id} ripreso dalla run {label}")
     return data
@@ -999,6 +1011,11 @@ def _process_elaborate_only(run: RunRecord, repo: Repository, settings: Settings
             f"Artefatti della run madre non trovati su disco: {exc}"
         ) from exc
     raw_data = json.loads(raw_bytes.decode("utf-8"))
+    if kb_requested(run.output_artifacts) and not has_kb_extraction(raw_data):
+        raise GuardrailRejection(
+            "La run originale non ha estratto concetti e domande e risposte complete, che servono al file "
+            "Knowledge base: rifai la run completa con il KB selezionato invece di rielaborarla."
+        )
 
     repo.update_run(
         run.run_id,
