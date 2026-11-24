@@ -27,7 +27,7 @@ def extract_chunks(raw: str) -> list[Chunk]:
     cleaned = re.sub(r"\n?```\s*$", "", cleaned)
 
     try:
-        data = json.loads(cleaned)
+        data = json.loads(cleaned, strict=False)
     except json.JSONDecodeError as exc:
         preview = cleaned[:300].replace("\n", " ")
         raise ModelResponseError(

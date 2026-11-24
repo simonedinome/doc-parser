@@ -64,7 +64,7 @@ def load_json_response(raw: str) -> dict:
     cleaned = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
     cleaned = re.sub(r"\n?```\s*$", "", cleaned)
     try:
-        return json.loads(cleaned)
+        return json.loads(cleaned, strict=False)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON non valido nella risposta del modello: {exc}") from exc
 
@@ -128,7 +128,7 @@ def parse_response(raw: str, content_type: str = "documento") -> dict:
     cleaned = re.sub(r"\n?```\s*$", "", cleaned)
 
     try:
-        data: dict = json.loads(cleaned)
+        data: dict = json.loads(cleaned, strict=False)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON non valido nella risposta del modello: {exc}") from exc
 
