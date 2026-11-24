@@ -17,11 +17,14 @@ from dataclasses import dataclass, field
 from doc_parser.pipeline import parser
 from doc_parser.pipeline.consolidation_prompts import (
     CONSOLIDATION_INVALID_JSON_TEMPLATE,
+    CONSOLIDATION_KB_SYSTEM_ADDENDUM,
+    CONSOLIDATION_KB_USER_ADDENDUM,
     CONSOLIDATION_RETRY_TEMPLATE,
     CONSOLIDATION_SYSTEM_PROMPT,
     CONSOLIDATION_USER_PROMPT_TEMPLATE,
 )
 from doc_parser.pipeline.inputs import SLIDES_INPUT_ID, InputFile
+from doc_parser.pipeline.kb_addendum import KB_MARKER, has_kb_extraction
 from doc_parser.pipeline.language import apply_language_directive
 from doc_parser.pipeline.slides_addendum import DISCREPANCY_MARKER, slides_attachments
 from doc_parser.providers.base import Attachment, BaseProvider
@@ -30,7 +33,7 @@ REQUIRED_KEYS = ("title", "summary", "prerequisites", "procedures", "glossary", 
 SLIDES_KIND = "slide"
 
 _KIND_RANK = {"webinar": 3, SLIDES_KIND: 2, "pillola": 1}
-_VIDEO_REF = re.compile(r"^(v\d+)/(proc_\d+)/(\d+)$")
+_VIDEO_REF = re.compile(r"^(v\d+)/(proc_\d+/\d+|con_\d+|qa_\d+)$")
 _PDF_REF = re.compile(r"^pdf/(\d+)$")
 _MAX_LISTED_ISSUES = 40
 _STEP_TEXT_FIELDS = ("title", "description", "notes", "embedding_keywords")
@@ -62,6 +65,16 @@ class SourceStep:
 
 
 @dataclass
+class KbSource:
+    """Concetto o domanda e risposta di uno step 1 estratto con l'addendum KB."""
+
+    ref: str
+    input_id: str
+    kind: str  # "concept" | "qa"
+    item: dict
+
+
+@dataclass
 class ConsolidationIndex:
     videos: list[InputFile]
     slides: InputFile | None
@@ -69,6 +82,12 @@ class ConsolidationIndex:
     step1: dict[str, dict]
     steps: dict[str, SourceStep]
     priority: list[str]
+    kb_items: dict[str, KbSource] = field(default_factory=dict)
+    kb: bool = False
+
+    def source_refs(self) -> list[str]:
+        """Tutti i riferimenti sorgente che il consolidamento deve coprire."""
+        return [*self.steps, *self.kb_items]
 
     def rank(self, input_id: str) -> int:
         return len(self.priority) - self.priority.index(input_id)
@@ -99,6 +118,10 @@ def normalize_step1(data: dict) -> dict:
         proc["id"] = f"proc_{proc_index:03d}"
         for step_index, step in enumerate(proc.get("steps", []), 1):
             step["number"] = step_index
+    for con_index, con in enumerate(normalized.get("concepts", []) or [], 1):
+        con["id"] = f"con_{con_index:03d}"
+    for qa_index, item in enumerate(normalized.get("qa", []) or [], 1):
+        item["id"] = f"qa_{qa_index:03d}"
     return normalized
 
 
@@ -130,6 +153,12 @@ def build_index(
             for step in proc.get("steps", []):
                 ref = f"{video.input_id}/{proc['id']}/{step['number']}"
                 steps[ref] = SourceStep(ref, video.input_id, proc.get("title", ""), step)
+    kb_items: dict[str, KbSource] = {}
+    for video, data in videos:
+        for kind, key in (("concept", "concepts"), ("qa", "qa")):
+            for item in data.get(key, []) or []:
+                ref = f"{video.input_id}/{item['id']}"
+                kb_items[ref] = KbSource(ref, video.input_id, kind, item)
     return ConsolidationIndex(
         videos=[v for v, _ in videos],
         slides=slides,
@@ -137,6 +166,8 @@ def build_index(
         step1={v.input_id: data for v, data in videos},
         steps=steps,
         priority=priority_order([v for v, _ in videos], slides),
+        kb_items=kb_items,
+        kb=any(has_kb_extraction(data) for _, data in videos),
     )
 
 
@@ -165,6 +196,10 @@ def build_request(index: ConsolidationIndex, language: str) -> tuple[str, str, l
         for proc in data.get("procedures", []):
             for step in proc.get("steps", []):
                 step["ref"] = f"{video.input_id}/{proc['id']}/{step['number']}"
+        for key in ("concepts", "qa"):
+            for item in data.get(key, []) or []:
+                item["ref"] = f"{video.input_id}/{item.pop('id')}"
+        data.pop(KB_MARKER, None)
         recorded = f"registrato il {video.recorded_at}" if video.recorded_at else "data di registrazione non indicata"
         header = f"=== FONTE {video.input_id} · {video.kind} · {recorded} · {video.filename} ==="
         blocks.append(f"{header}\n{json.dumps(data, ensure_ascii=False)}")
@@ -173,7 +208,11 @@ def build_request(index: ConsolidationIndex, language: str) -> tuple[str, str, l
     user_prompt = CONSOLIDATION_USER_PROMPT_TEMPLATE.format(
         slides_header=slides_header, priority=priority, sources="\n\n".join(blocks)
     )
-    system_prompt = apply_language_directive(CONSOLIDATION_SYSTEM_PROMPT, language)
+    system_prompt = CONSOLIDATION_SYSTEM_PROMPT
+    if index.kb:
+        system_prompt = f"{system_prompt}\n{CONSOLIDATION_KB_SYSTEM_ADDENDUM}"
+        user_prompt = f"{user_prompt}\n{CONSOLIDATION_KB_USER_ADDENDUM}"
+    system_prompt = apply_language_directive(system_prompt, language)
     return system_prompt, user_prompt, attachments
 
 
@@ -197,7 +236,7 @@ def _is_known_ref(index: ConsolidationIndex, ref: str) -> bool:
     pdf = _PDF_REF.match(ref)
     if pdf:
         return 1 <= int(pdf.group(1)) <= index.slide_count
-    return ref in index.steps
+    return ref in index.steps or ref in index.kb_items
 
 
 def _clean_refs(index: ConsolidationIndex, raw_refs, where: str, blocking: list[str]) -> list[str]:
@@ -232,6 +271,17 @@ def _copy_from_source(index: ConsolidationIndex, item: dict, refs: list[str]) ->
         return
     source = index.steps[refs[0]].step
     for key in _STEP_TEXT_FIELDS:
+        if not item.get(key):
+            item[key] = copy.deepcopy(source.get(key, [] if key == "embedding_keywords" else ""))
+
+
+def _copy_from_kb_source(index: ConsolidationIndex, item: dict, refs: list[str], kind: str, fields: tuple[str, ...]) -> None:
+    """Forma breve per concetti e Q&A: un solo riferimento a un elemento
+    sorgente dello stesso tipo riprende i campi di testo mancanti."""
+    if len(refs) != 1 or refs[0] not in index.kb_items or index.kb_items[refs[0]].kind != kind:
+        return
+    source = index.kb_items[refs[0]].item
+    for key in fields:
         if not item.get(key):
             item[key] = copy.deepcopy(source.get(key, [] if key == "embedding_keywords" else ""))
 
@@ -282,8 +332,9 @@ def validate(output: dict, index: ConsolidationIndex) -> Validation:
         where = f"concetto {con_index} ({con.get('title', '')!r})"
         refs = _clean_refs(index, con.get("merged_from"), where, blocking)
         con["merged_from"] = refs
+        _copy_from_kb_source(index, con, refs, "concept", ("title", "content", "embedding_keywords"))
         con["slides"] = _clean_slides(index, con.get("slides"), refs, where, warnings)
-        covered.update(r for r in refs if r in index.steps)
+        covered.update(r for r in refs if not _PDF_REF.match(r))
         used_slides.update(con["slides"], _source_slides_of(index, refs))
         if not refs and not con["slides"]:
             blocking.append(f"{where}: né merged_from né slides, contenuto non tracciabile")
@@ -305,12 +356,31 @@ def validate(output: dict, index: ConsolidationIndex) -> Validation:
             step["merged_from"] = refs
             _copy_from_source(index, step, refs)
             step["slides"] = _clean_slides(index, step.get("slides"), refs, where, warnings)
-            covered.update(r for r in refs if r in index.steps)
+            covered.update(r for r in refs if not _PDF_REF.match(r))
             used_slides.update(step["slides"], _source_slides_of(index, refs))
             if not refs and not step["slides"]:
                 blocking.append(f"{where}: né merged_from né slides, step non tracciabile")
             if not step.get("title") or not step.get("description"):
                 blocking.append(f"{where}: mancano title o description (obbligatori se lo step non riprende un solo step video)")
+
+    if index.kb:
+        qa_items = resolved.get("qa") or []
+        if not isinstance(qa_items, list) or not all(isinstance(item, dict) for item in qa_items):
+            blocking.append("'qa' deve essere una lista di oggetti JSON")
+            qa_items = []
+        for qa_index, item in enumerate(qa_items, 1):
+            where = f"domanda e risposta {qa_index} ({item.get('question', '')!r})"
+            refs = _clean_refs(index, item.get("merged_from"), where, blocking)
+            item["merged_from"] = refs
+            _copy_from_kb_source(index, item, refs, "qa", ("question", "answer"))
+            item["slides"] = _clean_slides(index, item.get("slides"), refs, where, warnings)
+            covered.update(r for r in refs if not _PDF_REF.match(r))
+            used_slides.update(item["slides"])
+            if not refs and not item["slides"]:
+                blocking.append(f"{where}: né merged_from né slides, contenuto non tracciabile")
+            if not item.get("question") or not item.get("answer"):
+                blocking.append(f"{where}: mancano question o answer")
+        resolved["qa"] = qa_items
 
     dropped = []
     for item in _as_list(resolved.get("dropped")):
@@ -355,11 +425,12 @@ def validate(output: dict, index: ConsolidationIndex) -> Validation:
         used_slides.add(numbers[0])
     resolved["skipped_slides"] = skipped
 
-    uncovered_refs = [ref for ref in index.steps if ref not in covered]
+    uncovered_refs = [ref for ref in index.source_refs() if ref not in covered]
     if uncovered_refs:
         listed = ", ".join(uncovered_refs[:_MAX_LISTED_ISSUES])
         more = f" e altri {len(uncovered_refs) - _MAX_LISTED_ISSUES}" if len(uncovered_refs) > _MAX_LISTED_ISSUES else ""
-        blocking.append(f"step sorgente non coperti (né in merged_from né in dropped): {listed}{more}")
+        label = "elementi sorgente" if index.kb_items else "step sorgente"
+        blocking.append(f"{label} non coperti (né in merged_from né in dropped): {listed}{more}")
 
     uncovered_slides = [n for n in range(1, index.slide_count + 1) if n not in used_slides]
     if uncovered_slides:
@@ -383,6 +454,8 @@ def _texts(data: dict):
             yield f"procedura {p}, step {s}", f"{step.get('title', '')} {step.get('description', '')} {step.get('notes', '')}"
     for n, note in enumerate(data.get("notes", []) or [], 1):
         yield f"nota generale {n}", str(note)
+    for q, item in enumerate(data.get("qa", []) or [], 1):
+        yield f"domanda e risposta {q}", f"{item.get('question', '')} {item.get('answer', '')}"
 
 
 # --- Arricchimento ---
@@ -405,6 +478,14 @@ def resolve_ref(index: ConsolidationIndex, ref: str) -> dict:
             "ref": ref, "input_id": SLIDES_INPUT_ID, "filename": index.slides.filename,
             "kind": SLIDES_KIND, "recorded_at": None, "timestamps": [], "slide": int(pdf.group(1)), "step_title": "",
         }
+    if ref in index.kb_items:
+        kb_source = index.kb_items[ref]
+        video = index.input(kb_source.input_id)
+        return {
+            "ref": ref, "input_id": video.input_id, "filename": video.filename, "kind": video.kind,
+            "recorded_at": video.recorded_at, "timestamps": [], "slide": None,
+            "step_title": kb_source.item.get("title") or kb_source.item.get("question", ""),
+        }
     source = index.steps[ref]
     video = index.input(source.input_id)
     return {
@@ -420,6 +501,8 @@ def _provenance(index: ConsolidationIndex, refs: list[str], slides: list[int]) -
         if ref in index.steps:
             source = index.steps[ref]
             timestamps.setdefault(source.input_id, []).extend(source.step.get("source_timestamps", []) or [])
+        elif ref in index.kb_items:
+            timestamps.setdefault(index.kb_items[ref].input_id, [])
     sources = []
     for input_id in index.priority:
         if input_id in timestamps:
@@ -493,7 +576,7 @@ def enrich(validation: Validation, index: ConsolidationIndex, extra_warnings: li
         "warnings": list(validation.warnings) + list(extra_warnings or []),
     }
 
-    return {
+    result = {
         "title": output.get("title", ""),
         "summary": output.get("summary", ""),
         "prerequisites": output.get("prerequisites", []),
@@ -504,6 +587,18 @@ def enrich(validation: Validation, index: ConsolidationIndex, extra_warnings: li
         "source_inputs": source_inputs,
         "consolidation_log": consolidation_log,
     }
+    if index.kb:
+        result["qa"] = [
+            {
+                "id": f"qa_{i:03d}",
+                "question": item.get("question", ""),
+                "answer": item.get("answer", ""),
+                **_provenance(index, item["merged_from"], item["slides"]),
+            }
+            for i, item in enumerate(output.get("qa", []), 1)
+        ]
+        result[KB_MARKER] = True
+    return result
 
 
 # --- Chiamata con retry ---

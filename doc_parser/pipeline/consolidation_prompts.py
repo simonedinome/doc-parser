@@ -108,3 +108,24 @@ CONSOLIDATION_INVALID_JSON_TEMPLATE = """\
 La tua risposta precedente non era un JSON valido ({error}): probabilmente è stata troncata perché \
 troppo lunga. Rispondi di nuovo con il JSON completo e più compatto: usa la forma breve \
 {{"merged_from": ["ref"]}} per ogni step che riprende un solo step sorgente senza modifiche."""
+
+# Addendum appeso solo nelle run con l'artefatto "kb", quando gli step 1 contengono
+# anche concetti (ref v1/con_001) e domande e risposte (ref v1/qa_001).
+CONSOLIDATION_KB_SYSTEM_ADDENDUM = """\
+Oltre agli step, le fonti contengono concetti (riferimenti come "v1/con_001") e domande e risposte \
+(riferimenti come "v1/qa_001"):
+- Unisci nei "concepts" del risultato i concetti sorgente che trattano lo stesso tema, senza perdere \
+spiegazioni, regole, eccezioni o esempi.
+- Unisci nella stessa voce di "qa" le domande e risposte che pongono la stessa domanda: tieni la \
+risposta più completa e, se le fonti si contraddicono, quella della fonte con priorità più alta. Non \
+riassumere le risposte e non spostare le domande e risposte nelle note.
+- Ogni concetto e ogni domanda e risposta sorgente deve comparire in almeno un "merged_from" oppure \
+in "dropped" con il motivo."""
+
+CONSOLIDATION_KB_USER_ADDENDUM = """\
+Aggiungi al JSON, allo stesso livello di "procedures", il campo:
+  "qa": [{"question": "Domanda completa e autonoma", "answer": "Risposta completa", \
+"merged_from": ["v1/qa_001", "v2/qa_003"]}]
+
+I riferimenti a concetti e domande e risposte sorgente ("v1/con_001", "v1/qa_001") vanno in \
+"merged_from" di concetti e domande e risposte, oppure in "dropped". "qa" può essere lista vuota."""
