@@ -31,6 +31,7 @@ _ARTIFACT_OPTIONS = [
     ("procedura", "Procedura (procedura.txt)"),
     ("glossario", "Glossario (glossario.txt)"),
     ("rag_chunks", "Chunk RAG (rag_chunks.jsonl)"),
+    ("kb", "Knowledge base per Agentforce (TXT con concetti, procedure e Q&A complete)"),
 ]
 _PPTX_OPTION = ("pptx", "Presentazione tutorial (presentazione_tutorial.pptx)")
 _DEFAULT_ARTIFACTS = {"html_standalone", "procedura", "glossario", "rag_chunks"}

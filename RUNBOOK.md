@@ -14,7 +14,7 @@ volta per processo, `st.cache_resource` in `doc_parser/ui/context.py`) e sopravv
 alla chiusura dei singoli tab: le run restano in coda/in elaborazione anche se
 nessun browser è collegato, finché il processo Streamlit resta attivo.
 
-Per la CLI batch/coda YAML vedi la sezione "CLI" del `README.md`.
+Per la CLI batch/coda YAML vedi la sezione «Usare la riga di comando» di `istruzioni.md`.
 
 ## Riavvio dopo modifica di `.env`
 
@@ -76,9 +76,18 @@ data/
                          # step1_v{n}.json di ogni video delle serie consolidate:
                          # servono a --resume, non cancellarli se una serie è FAILED)
   screenshots/{run_id}/  # screenshot video / pagine PDF per run
-  artifacts/{run_id}/    # procedura.txt, glossario.txt, rag_chunks.jsonl, html, log.txt
+  artifacts/{nome-run}_{AAAA-MM-GG_HHMM}/
+                         # procedura.txt, glossario.txt, rag_chunks.jsonl, html, log.txt,
+                         # TXT Knowledge base {nome-run}_{AAAA-MM-GG_HHMM}.txt
   runs_checkpoint.json   # checkpoint della coda CLI (YAML/batch), non della UI
 ```
+
+Il nome della cartella è il `name` della run nella coda YAML, oppure il nome del
+file caricato, oppure il titolo del documento (serie caricate dalla UI), seguito
+da data e ora di avvio. Se il nome esiste già si aggiunge `_2`, `_3`…: rifare una
+run non cancella mai gli output di un'altra. Le run create prima di questa
+versione restano in `artifacts/{run_id}/`; il percorso di ogni run è salvato nel
+DB (`output_dir_ref`), quindi la UI le trova comunque.
 
 Per azzerare completamente lo stato (run, log, costi): ferma il processo e
 rimuovi `data/`. Per azzerare solo il checkpoint della CLI (rieseguire da capo
@@ -120,4 +129,5 @@ la modifica: il file è riletto a ogni run.
 | `Saldo OpenRouter insufficiente... (HTTP 402)` | Credito OpenRouter esaurito (il plugin `file-parser`, usato per i PDF nativi, richiede almeno $0.50 residui) | Ricarica il credito su `https://openrouter.ai/credits`; nessun retry automatico, l'errore è permanente per definizione |
 | `Autenticazione Gemini rifiutata... ACCESS_TOKEN_TYPE_UNSUPPORTED (HTTP 401)` | La `GEMINI_API_KEY` è in formato `AQ.` (rilasciato ora da Google ad alcuni account) invece del classico `AIza...`. Le chiavi `AQ.` sono "authorization key" legate a un service account, non semplici API key: possono essere rifiutate sia dalla Files API sia da `generateContent` stesso, non solo per gli allegati grandi | Prima cosa da provare: `pip install -U google-genai` (assicurati di avere `google-genai>=2.12`, `pip show google-genai`) — versioni recenti dell'SDK gestiscono meglio le authorization key. Se persiste, non è risolvibile lato app: è una restrizione nota e ancora in corso lato Google (segnalata anche via `curl` grezzo, indipendente da qualunque SDK/libreria). Verifica il formato della chiave su `https://aistudio.google.com/apikey`; se possibile, rigenerane una in formato `AIza...`, oppure valuta di instradare i modelli Gemini tramite OpenRouter (che usa proprie credenziali Cloud) come alternativa |
 | `FOUNDRY_ENDPOINT, FOUNDRY_API_KEY e FOUNDRY_DEPLOYMENT sono obbligatori` | `FoundryProvider` istanziato senza configurazione | Previsto: il provider è dormiente in v1, non è raggiungibile dal menu utente |
+| Rielabora rifiutata: `La run originale non ha estratto concetti e domande e risposte complete` | Si è chiesto il file Knowledge base rielaborando una run fatta senza KB: il suo step 1 non contiene concetti e Q&A | Rifai la run completa con l'artefatto `kb` selezionato; con `--resume` invece gli step 1 senza KB vengono rifatti da soli |
 | Rielabora non disponibile per una run | La run non è video, non è `Done`, o manca il JSON grezzo | Il pulsante compare solo per run video completate con `raw_json_ref` valorizzato |

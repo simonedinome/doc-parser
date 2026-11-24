@@ -114,7 +114,7 @@ def build_kb_txt(data: dict, language: str = "it", max_chars: int = KB_SECTION_M
     for proc in data.get("procedures", []) or []:
         steps = []
         for step in proc.get("steps", []) or []:
-            lines = [f"{s['kb_step']} {step.get('number', '')} — {step.get('title', '')}".strip(), str(step.get("description", ""))]
+            lines = [f"{s['kb_step']} {step.get('number', '')} — {step.get('title', '')}".strip(), str(step.get("description", "")).strip()]
             if step.get("notes"):
                 lines.append(f"{s['kb_step_notes']}: {step['notes']}")
             steps.append("\n".join(line for line in lines if line))

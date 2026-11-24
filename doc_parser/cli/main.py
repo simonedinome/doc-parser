@@ -121,7 +121,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-artifacts",
         help=(
             "Lista separata da virgole tra: html_standalone, html_folder, procedura, glossario, "
-            f"rag_chunks, pptx (pptx solo per le run video). Batch, default: {d['output_artifacts']}; "
+            "rag_chunks, pptx (solo run video), kb (TXT Knowledge base per Agentforce, con concetti e "
+            f"Q&A complete). Batch, default: {d['output_artifacts']}; "
             "con --resume: quelli della run madre"
         ),
     )

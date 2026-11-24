@@ -25,7 +25,9 @@ settings:
   output_mode: documentazione
 
   # File da avere in output, separati da virgola: html_standalone | html_folder |
-  # procedura | glossario | rag_chunks | pptx (presentazione tutorial, solo video)
+  # procedura | glossario | rag_chunks | pptx (presentazione tutorial, solo video) |
+  # kb (TXT Knowledge base per la Data Library di Agentforce: concetti, procedure,
+  # domande e risposte complete; chiede allo step 1 anche concetti e Q&A)
   output_artifacts: html_standalone,procedura,glossario,rag_chunks
 
   # Numero massimo di run eseguite in parallelo
@@ -94,4 +96,4 @@ runs:
         path: input/slide_formazione.pdf   # al massimo un PDF di slide per run
     settings:
       content_type: video
-      output_artifacts: html_standalone,procedura,glossario,rag_chunks,pptx
+      output_artifacts: html_standalone,procedura,glossario,rag_chunks,pptx,kb
