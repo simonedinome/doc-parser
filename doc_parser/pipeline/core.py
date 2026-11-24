@@ -62,7 +62,9 @@ _ITEM_PROVENANCE_KEYS = ("sources", "source_slides", "merged_from", "slides")
 _TOP_LEVEL_PROVENANCE_KEYS = ("source_inputs", "consolidation_log", "qa", KB_MARKER)
 
 
-def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
+def process_run(run: RunRecord, repo: Repository, settings: Settings, force: bool = False) -> None:
+    """Elabora *run*. Con *force* un file già elaborato con la stessa
+    configurazione viene rielaborato invece di riusare l'output precedente."""
     if run.parent_run_id:
         _process_elaborate_only(run, repo, settings)
         return
@@ -84,7 +86,7 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
     total_size = sum(len(data) for _, data in input_files)
     guardrails.check_size(total_size, settings.max_upload_mb)
 
-    if len(input_files) == 1 and _reuse_if_duplicate(run, repo, input_files[0][1]):
+    if len(input_files) == 1 and _reuse_if_duplicate(run, repo, input_files[0][1], force):
         return
 
     if run.input_type == "video":
@@ -95,7 +97,7 @@ def process_run(run: RunRecord, repo: Repository, settings: Settings) -> None:
         _process_document(run, repo, settings, input_files)
 
 
-def _reuse_if_duplicate(run: RunRecord, repo: Repository, data: bytes) -> bool:
+def _reuse_if_duplicate(run: RunRecord, repo: Repository, data: bytes, force: bool = False) -> bool:
     """Se un file identico è già stato elaborato con la stessa configurazione
     (modello, lingua, output_mode, content_type, output_artifacts), riusa l'output
     esistente senza una nuova chiamata LLM. Ritorna True se la run è stata
@@ -106,6 +108,8 @@ def _reuse_if_duplicate(run: RunRecord, repo: Repository, data: bytes) -> bool:
     """
     input_hash = guardrails.sha256_hash(data)
     repo.update_run(run.run_id, input_hash=input_hash)
+    if force:
+        return False
 
     duplicate = repo.find_done_by_hash(input_hash)
     if duplicate is None or not _same_configuration(run, duplicate):

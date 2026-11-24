@@ -26,6 +26,20 @@ streamlit run doc_parser/ui/app.py
 Servono anche `ffmpeg` e, per i `.doc`, LibreOffice. Le chiavi API vanno in
 `.env`.
 
+Dalla riga di comando, con una coda di run in `runs.yaml`:
+
+```bash
+python -m doc_parser.cli --runs-file runs.yaml
+```
+
+Le run già completate (o i file già elaborati con le stesse impostazioni) non
+vengono rifatte. Per rifarle da capo aggiungi `--force`: la nuova elaborazione
+va in una cartella nuova e quella precedente resta intatta.
+
+```bash
+python -m doc_parser.cli --runs-file runs.yaml --force
+```
+
 ## Documentazione
 
 | Documento | Per chi | Cosa contiene |

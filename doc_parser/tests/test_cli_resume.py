@@ -75,7 +75,7 @@ def test_resume_is_exclusive_with_batch_sources(other, settings) -> None:  # noq
         _main(["--resume", "abc", *other], settings)
 
 
-@pytest.mark.parametrize("flag", [["--requester", "x@y"], ["--parallel", "2"]])
+@pytest.mark.parametrize("flag", [["--requester", "x@y"], ["--parallel", "2"], ["--force"]])
 def test_resume_rejects_flags_that_do_not_apply(flag, settings) -> None:  # noqa: F811
     with pytest.raises(SystemExit, match="non applicabile con --resume"):
         _main(["--resume", "abc", *flag], settings)
@@ -143,3 +143,15 @@ def test_resume_failing_again_exits_non_zero(monkeypatch, repo, settings) -> Non
     with pytest.raises(SystemExit) as exc:
         _main(["--resume", mother.run_id], settings)
     assert exc.value.code == 1
+
+
+def test_force_reaches_the_yaml_queue(monkeypatch, settings, tmp_path) -> None:  # noqa: F811
+    seen = {}
+
+    def _fake_queue(runs_file, settings, checkpoint_path=None, force=False):
+        seen["force"] = force
+        return {"completed_runs": [], "failed_runs": {}}
+
+    monkeypatch.setattr("doc_parser.cli.main.run_yaml_queue", _fake_queue)
+    _main(["--runs-file", str(tmp_path / "runs.yaml"), "--force"], settings)
+    assert seen == {"force": True}

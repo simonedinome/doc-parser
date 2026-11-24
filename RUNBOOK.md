@@ -90,9 +90,11 @@ versione restano in `artifacts/{run_id}/`; il percorso di ogni run è salvato ne
 DB (`output_dir_ref`), quindi la UI le trova comunque.
 
 Per azzerare completamente lo stato (run, log, costi): ferma il processo e
-rimuovi `data/`. Per azzerare solo il checkpoint della CLI (rieseguire da capo
-un batch/coda YAML senza toccare lo storico delle run): rimuovi
-`data/runs_checkpoint.json`.
+rimuovi `data/`. Per rieseguire da capo un batch/coda YAML senza toccare lo
+storico delle run usa `--force` (rifà anche le run completate e quelle che
+risulterebbero duplicate, in cartelle nuove); in alternativa rimuovi
+`data/runs_checkpoint.json`, che però non scavalca la deduplica dei file già
+elaborati con la stessa configurazione.
 
 ## Migrazione automatica di `runs.db`
 

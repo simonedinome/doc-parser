@@ -159,7 +159,36 @@ Cosa aspettarti a schermo:
 4. `Completate: N, Fallite: M`.
 
 Se interrompi la coda, al riavvio riparte dalle run non ancora completate (il
-promemoria è in `data/runs_checkpoint.json`: cancellalo per ripartire da zero).
+promemoria è in `data/runs_checkpoint.json`).
+
+### Rifare una run già fatta: `--force`
+
+Senza istruzioni particolari il programma evita di rifare lavoro già fatto, e
+quindi di pagarlo due volte:
+
+1. le run della coda già **completate** vengono saltate;
+2. un file **identico** a uno già elaborato con le stesse impostazioni (modello,
+   lingua, tipo di contenuto, file di output) non viene riletto: la run risulta
+   «duplicato» e riusa il risultato precedente.
+
+Se invece vuoi una nuova elaborazione (ad esempio perché è cambiato il prompt o
+vuoi confrontare due risultati), aggiungi `--force`:
+
+```bash
+python -m doc_parser.cli --runs-file runs.yaml --force
+```
+
+Con `--force`:
+
+1. tutte le run della coda vengono rifatte, anche quelle già completate o
+   duplicate;
+2. ogni run nuova va in una **cartella nuova** (`nome-run_data_ora`, con `_2` se
+   è lo stesso minuto): la cartella precedente **resta intatta**, niente viene
+   sovrascritto;
+3. la run costa come una run nuova.
+
+`--force` vale anche con `--input-dir` e `--urls-file`. Non si usa con
+`--resume`, che crea già sempre una run nuova.
 
 **Valori di `output_artifacts`** (separati da virgola): `kb`, `html_standalone`,
 `html_folder`, `procedura`, `glossario`, `rag_chunks`, `pptx` (solo video).
@@ -252,8 +281,9 @@ data/artifacts/formazione-gestionale_2026-11-24_0854/
 ```
 
 Il nome della run è il `name` della coda YAML, oppure il nome del file caricato,
-oppure (per le serie caricate dalla web app) il titolo del documento. Se rifai
-la stessa run nello stesso minuto, la cartella nuova prende `_2`, `_3`…: le
+oppure (per le serie caricate dalla web app) il titolo del documento. Ogni
+elaborazione, comprese quelle forzate con `--force`, ha la sua cartella: se rifai
+la stessa run nello stesso minuto, la cartella nuova prende `_2`, `_3`…. Le
 versioni precedenti non vengono mai cancellate.
 
 Lo stesso contenuto è anche nello ZIP scaricabile dalla web app.
@@ -332,6 +362,8 @@ po' di più. Le run senza Knowledge base costano e si comportano come prima.
 |---|---|---|
 | `warning: The fitz API is deprecated…` | Avviso innocuo della libreria PDF | Nulla: la run prosegue |
 | Nessun messaggio per molti minuti dopo `Avvio … run` | La run sta lavorando: la riga di comando scrive solo alla fine | Aspetta |
+| `Nessuna run da eseguire (tutte già completate)` | Le run della coda sono già nel checkpoint | Aggiungi `--force` per rifarle in una cartella nuova |
+| La run risulta «duplicato» e non chiama il modello | Lo stesso file è già stato elaborato con le stesse impostazioni | Aggiungi `--force` se vuoi comunque una nuova elaborazione |
 | Il TXT non contiene i concetti o le domande e risposte | La run non aveva la Knowledge base selezionata | Rifai la run con `kb` negli output |
 | `Rielabora rifiutata: … non ha estratto concetti …` | Si è chiesta la Knowledge base rielaborando una run fatta senza | Rifai la run completa con `kb` |
 | `PDF di slide … oltre il limite di 50 MB` | PDF troppo grande | Comprimi il PDF o togli le slide inutili |

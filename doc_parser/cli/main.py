@@ -132,6 +132,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--requester", help=f"requester_upn associato alle run create (solo batch, default: {d['requester']})"
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Rielabora anche le run già completate nel checkpoint e i file già elaborati con la stessa "
+            "configurazione: la nuova elaborazione va in una cartella nuova e non sovrascrive la "
+            "precedente. Costa come una run nuova. Non si usa con --resume"
+        ),
+    )
     parser.add_argument("--data-dir", metavar="PATH", help="Override di DATA_DIR (valido anche con --resume)")
     return parser
 
@@ -147,7 +156,7 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> Run
         return _resume(args, settings)
 
     if args.runs_file:
-        checkpoint = run_yaml_queue(Path(args.runs_file), settings)
+        checkpoint = run_yaml_queue(Path(args.runs_file), settings, force=args.force)
     else:
         if not args.input_dir and not args.urls_file:
             raise SystemExit("Specifica --runs-file, oppure --input-dir e/o --urls-file, oppure --resume.")
@@ -155,7 +164,7 @@ def main(argv: list[str] | None = None, settings: Settings | None = None) -> Run
         if not config.runs:
             logger.info("Nessun file o URL da elaborare.")
             return None
-        checkpoint = run_queue(config, settings)
+        checkpoint = run_queue(config, settings, force=args.force)
 
     completed = len(checkpoint.get("completed_runs", []))
     failed = checkpoint.get("failed_runs", {})
@@ -178,6 +187,8 @@ def _resume(args: argparse.Namespace, settings: Settings) -> RunRecord:
     for flag, value in (("--requester", args.requester), ("--parallel", args.parallel)):
         if value is not None:
             raise SystemExit(f"{flag} non applicabile con --resume: richiedente e sessione vengono dalla run madre.")
+    if args.force:
+        raise SystemExit("--force non applicabile con --resume: una ripresa crea già sempre una nuova run.")
 
     repo = SqliteRepository(data_dir=settings.data_dir)
     mother = repo.get_run(args.resume)
