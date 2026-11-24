@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from doc_parser.pipeline.inputs import normalize_kind, normalize_recorded_at
 from doc_parser.pipeline.profiles import CONTENT_TYPES
 
 
@@ -17,6 +18,8 @@ class InputSource:
     order: int = 0
     path: str | None = None
     url: str | None = None
+    kind: str | None = None  # "webinar" | "pillola" (solo video; default webinar)
+    recorded_at: str | None = None  # data di registrazione ISO AAAA-MM-GG
 
 
 @dataclass
@@ -101,7 +104,14 @@ def load_runs_config(path: Path) -> RunsConfig:
                 raise ValueError(f"Run '{name}': source='file' richiede il campo 'path'.")
             if source == "url" and not url:
                 raise ValueError(f"Run '{name}': source='url' richiede il campo 'url'.")
-            inputs.append(InputSource(source=source, order=order, path=path, url=url))
+            try:
+                kind = normalize_kind(raw_input.get("kind")) if raw_input.get("kind") is not None else None
+                recorded_at = normalize_recorded_at(raw_input.get("recorded_at"))
+            except ValueError as exc:
+                raise ValueError(f"Run '{name}': {exc}") from exc
+            inputs.append(
+                InputSource(source=source, order=order, path=path, url=url, kind=kind, recorded_at=recorded_at)
+            )
 
         if not inputs:
             raise ValueError(f"Run '{name}': la lista 'inputs' non può essere vuota.")

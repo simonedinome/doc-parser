@@ -14,7 +14,7 @@ volta per processo, `st.cache_resource` in `doc_parser/ui/context.py`) e sopravv
 alla chiusura dei singoli tab: le run restano in coda/in elaborazione anche se
 nessun browser è collegato, finché il processo Streamlit resta attivo.
 
-Per la CLI batch/coda YAML vedi la sezione "CLI" del `README.md`.
+Per la CLI batch/coda YAML vedi la sezione «Usare la riga di comando» di `istruzioni.md`.
 
 ## Riavvio dopo modifica di `.env`
 
@@ -72,16 +72,38 @@ Tutto lo stato applicativo vive sotto `data/` (gitignored):
 data/
   runs.db              # SQLite: metadati di tutte le run (UI + CLI)
   inbox/                # file di input caricati (bytes grezzi)
-  outputs/               # blob di output (JSON grezzo/finale, zip, TXT KB densa)
+  outputs/               # blob di output (JSON grezzo/finale, zip, TXT KB densa,
+                         # step1_v{n}.json di ogni video delle serie consolidate:
+                         # servono a --resume, non cancellarli se una serie è FAILED)
   screenshots/{run_id}/  # screenshot video / pagine PDF per run
-  artifacts/{run_id}/    # procedura.txt, glossario.txt, rag_chunks.jsonl, html, log.txt
+  artifacts/{nome-run}_{AAAA-MM-GG_HHMM}/
+                         # procedura.txt, glossario.txt, rag_chunks.jsonl, html, log.txt,
+                         # TXT Knowledge base {nome-run}_{AAAA-MM-GG_HHMM}.txt
   runs_checkpoint.json   # checkpoint della coda CLI (YAML/batch), non della UI
 ```
 
+Il nome della cartella è il `name` della run nella coda YAML, oppure il nome del
+file caricato, oppure il titolo del documento (serie caricate dalla UI), seguito
+da data e ora di avvio. Se il nome esiste già si aggiunge `_2`, `_3`…: rifare una
+run non cancella mai gli output di un'altra. Le run create prima di questa
+versione restano in `artifacts/{run_id}/`; il percorso di ogni run è salvato nel
+DB (`output_dir_ref`), quindi la UI le trova comunque.
+
 Per azzerare completamente lo stato (run, log, costi): ferma il processo e
-rimuovi `data/`. Per azzerare solo il checkpoint della CLI (rieseguire da capo
-un batch/coda YAML senza toccare lo storico delle run): rimuovi
-`data/runs_checkpoint.json`.
+rimuovi `data/`. Per rieseguire da capo un batch/coda YAML senza toccare lo
+storico delle run usa `--force` (rifà anche le run completate e quelle che
+risulterebbero duplicate, in cartelle nuove); in alternativa rimuovi
+`data/runs_checkpoint.json`, che però non scavalca la deduplica dei file già
+elaborati con la stessa configurazione.
+
+## Migrazione automatica di `runs.db`
+
+Le colonne aggiunte a `RunRecord` (ad esempio i costi del consolidamento,
+`consolidation_model`/`consolidation_tokens_*`/`consolidation_cost_eur`) vengono
+aggiunte da sole a un `runs.db` esistente all'avvio dell'app o della CLI
+(`ALTER TABLE ... ADD COLUMN` sulle colonne mancanti): nessun intervento manuale,
+lo storico resta intatto e le run vecchie hanno quei campi vuoti. Se UI e CLI
+partono insieme sullo stesso DB, la migrazione concorrente è tollerata.
 
 ## Aggiornare `models.yaml`
 
@@ -98,10 +120,16 @@ la modifica: il file è riletto a ogni run.
 | Sintomo | Causa probabile | Azione |
 |---|---|---|
 | `LibreOffice (soffice) non è installato` su run `.doc` | `soffice` mancante dal `PATH` | Installa LibreOffice (vedi devcontainer/README) |
-| Screenshot mancanti nell'HTML/zip di una run video | `ffmpeg` mancante o video corrotto | Verifica `ffmpeg -version`; controlla `log.txt` nello zip per i warning di clamp-durata |
+| Screenshot mancanti nell'HTML/zip di una run video | `ffmpeg` mancante o video corrotto | Verifica `ffmpeg -version`. Gli avvisi di clamp-durata sono nel campo `error_message` della run (Log tecnico) e, per le serie consolidate, anche nella sezione AVVISI del `log.txt` nello zip |
+| `Il consolidamento non ha prodotto un risultato valido dopo N tentativi: JSON non valido ... troncata` | La serie è troppo lunga per l'output massimo del modello scelto: la risposta si interrompe a metà | Riprendi la serie con un modello con output più lungo, senza ripagare lo step 1: `python -m doc_parser.cli --resume <run_id> --model <modello>` (riusa `data/outputs/{run_id}_step1_v*.json`); se fallisce anche così, dividi la serie in più run (ad esempio un webinar con le sue pillole) |
+| `Il consolidamento non ha prodotto un risultato valido ...: step sorgente non coperti` / `riferimento inesistente` | Il modello ha perso o inventato riferimenti a step dei video anche dopo i retry con feedback | Riprendi con un modello più capace: `python -m doc_parser.cli --resume <run_id> --model <modello>` (lo step 1 non si ripaga); con serie lunghe, dividi la serie |
+| `--resume: ... si possono riprendere solo le run fallite` / `non è passata dal consolidamento` / `lingua ... diversa` / `non sono più su disco` | La run indicata non è riprendibile: non è FAILED, era un video singolo senza PDF, si è chiesta un'altra lingua, oppure `data/inbox` è stato ripulito | Controlla l'ID in Log tecnico; se gli input non ci sono più o serve un'altra lingua, avvia una nuova run |
+| Run rifiutata: `Puoi caricare al massimo un PDF di slide`, `Serve almeno un video`, `PDF di slide di ... MB oltre il limite di 50 MB` | Input della serie non validi | Tieni un solo PDF per run e almeno un video; comprimi il PDF o togli le slide non necessarie |
+| `log.txt` con righe `ATTENZIONE: fonte scartata più recente` | Una pillola (o un webinar più vecchio con data) ha perso contro una fonte con priorità più alta ma più vecchia | Verifica il video al timestamp indicato: se l'interfaccia è cambiata, carica la registrazione aggiornata come webinar o correggi l'etichetta |
 | Run bloccata su "In elaborazione" dopo un crash | Worker interrotto a metà run | Riavvia il processo: `_recover_stale_processing()` la rimette in coda automaticamente |
 | Errore di connessione ai provider (`Connection error.` / `TransientProviderError`) | Rete non raggiungibile verso OpenRouter/Gemini (firewall, proxy, chiave API assente) | Verifica `GEMINI_API_KEY`/`OPENROUTER_API_KEY` in `.env` e la connettività di rete; la run viene ritentata secondo `RETRY_MAX_ATTEMPTS`/`RETRY_BACKOFF_SECONDS` prima di fallire |
 | `Saldo OpenRouter insufficiente... (HTTP 402)` | Credito OpenRouter esaurito (il plugin `file-parser`, usato per i PDF nativi, richiede almeno $0.50 residui) | Ricarica il credito su `https://openrouter.ai/credits`; nessun retry automatico, l'errore è permanente per definizione |
 | `Autenticazione Gemini rifiutata... ACCESS_TOKEN_TYPE_UNSUPPORTED (HTTP 401)` | La `GEMINI_API_KEY` è in formato `AQ.` (rilasciato ora da Google ad alcuni account) invece del classico `AIza...`. Le chiavi `AQ.` sono "authorization key" legate a un service account, non semplici API key: possono essere rifiutate sia dalla Files API sia da `generateContent` stesso, non solo per gli allegati grandi | Prima cosa da provare: `pip install -U google-genai` (assicurati di avere `google-genai>=2.12`, `pip show google-genai`) — versioni recenti dell'SDK gestiscono meglio le authorization key. Se persiste, non è risolvibile lato app: è una restrizione nota e ancora in corso lato Google (segnalata anche via `curl` grezzo, indipendente da qualunque SDK/libreria). Verifica il formato della chiave su `https://aistudio.google.com/apikey`; se possibile, rigenerane una in formato `AIza...`, oppure valuta di instradare i modelli Gemini tramite OpenRouter (che usa proprie credenziali Cloud) come alternativa |
 | `FOUNDRY_ENDPOINT, FOUNDRY_API_KEY e FOUNDRY_DEPLOYMENT sono obbligatori` | `FoundryProvider` istanziato senza configurazione | Previsto: il provider è dormiente in v1, non è raggiungibile dal menu utente |
+| Rielabora rifiutata: `La run originale non ha estratto concetti e domande e risposte complete` | Si è chiesto il file Knowledge base rielaborando una run fatta senza KB: il suo step 1 non contiene concetti e Q&A | Rifai la run completa con l'artefatto `kb` selezionato; con `--resume` invece gli step 1 senza KB vengono rifatti da soli |
 | Rielabora non disponibile per una run | La run non è video, non è `Done`, o manca il JSON grezzo | Il pulsante compare solo per run video completate con `raw_json_ref` valorizzato |

@@ -4,6 +4,7 @@ zero logica di elaborazione duplicata rispetto a doc_parser.ui.views.elabora."""
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import threading
@@ -15,6 +16,7 @@ from doc_parser.cli.config import GlobalSettings, RunConfig, RunsConfig, load_ru
 from doc_parser.core.models import RunRecord, RunStatus
 from doc_parser.ingestion import guardrails
 from doc_parser.ingestion.downloader import download_url
+from doc_parser.pipeline.inputs import describe_inputs, save_manifest
 from doc_parser.settings import Settings
 from doc_parser.storage.sqlite_repo import SqliteRepository
 from doc_parser.worker.processor import Worker
@@ -62,11 +64,12 @@ def _process_run_config(
 ) -> RunRecord:
     effective = resolve_run_settings(global_settings, run_config.settings)
     is_video = effective["content_type"] in _VIDEO_CONTENT_TYPES
+    allow_slides_pdf = effective["content_type"] == "video"
 
     with TemporaryDirectory(prefix="doc_parser_cli_") as tmp_dir:
         files = _resolve_files(run_config, Path(tmp_dir))
 
-        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files])
+        input_type = guardrails.resolve_input_type(is_video, [f[0] for f in files], allow_slides_pdf)
         total_size = sum(len(data) for _, data in files)
         guardrails.check_size(total_size, settings.max_upload_mb)
 
@@ -91,6 +94,12 @@ def _process_run_config(
             filename, data = files[0]
             run.input_size_bytes = len(data)
             run.input_path = repo.save_input_file(run.run_id, filename, data)
+        elif input_type == "video":
+            descriptors = describe_inputs(
+                [(filename, item.kind, item.recorded_at) for (filename, _), item in zip(files, run_config.inputs)]
+            )
+            run.input_size_bytes = sum(len(data) for _, data in files)
+            run.input_manifest_ref = save_manifest(repo, run.run_id, descriptors, [data for _, data in files])
         else:
             manifest = []
             for filename, data in files:
@@ -106,22 +115,35 @@ def _process_run_config(
     return repo.get_run(run.run_id)
 
 
-def run_queue(config: RunsConfig, settings: Settings, checkpoint_path: Path | None = None) -> dict:
+def run_queue(
+    config: RunsConfig, settings: Settings, checkpoint_path: Path | None = None, force: bool = False
+) -> dict:
     """Esegue tutte le run pendenti di *config* con parallelismo e checkpoint.
+
+    Con *force* esegue tutte le run, anche quelle già completate nel
+    checkpoint, e non riusa l'output dei file già elaborati con la stessa
+    configurazione: ogni run produce una nuova elaborazione in una cartella
+    nuova, senza toccare le precedenti.
 
     Ritorna il checkpoint finale ``{"completed_runs": [...], "failed_runs": {...}}``.
     """
+    from doc_parser.pipeline.core import process_run
+
     checkpoint_path = checkpoint_path or (settings.data_dir / "runs_checkpoint.json")
     checkpoint = _load_checkpoint(checkpoint_path)
     completed = set(checkpoint.get("completed_runs", []))
 
-    pending = [r for r in config.runs if r.name not in completed]
+    pending = list(config.runs) if force else [r for r in config.runs if r.name not in completed]
     if not pending:
-        logger.info("Nessuna run da eseguire (tutte già completate).")
+        logger.info("Nessuna run da eseguire (tutte già completate). Usa --force per rifarle.")
         return checkpoint
 
     repo = SqliteRepository(data_dir=settings.data_dir)
-    worker = Worker(repo=repo, settings=settings)
+    if force:
+        logger.info("Elaborazione forzata: anche le run già completate o con un duplicato vengono rifatte.")
+        worker = Worker(repo=repo, settings=settings, process_fn=functools.partial(process_run, force=True))
+    else:
+        worker = Worker(repo=repo, settings=settings)
 
     logger.info(
         "Avvio %d run con al massimo %d worker paralleli.", len(pending), config.settings.parallel_runs
@@ -137,7 +159,9 @@ def run_queue(config: RunsConfig, settings: Settings, checkpoint_path: Path | No
             try:
                 result = future.result()
                 if result is not None and result.status in (RunStatus.DONE, RunStatus.DUPLICATE):
-                    checkpoint.setdefault("completed_runs", []).append(run_config.name)
+                    completed_runs = checkpoint.setdefault("completed_runs", [])
+                    if run_config.name not in completed_runs:
+                        completed_runs.append(run_config.name)
                     checkpoint.setdefault("failed_runs", {}).pop(run_config.name, None)
                     logger.info("Run '%s' completata (%s).", run_config.name, result.status.value)
                 else:
@@ -152,6 +176,8 @@ def run_queue(config: RunsConfig, settings: Settings, checkpoint_path: Path | No
     return checkpoint
 
 
-def run_yaml_queue(runs_file: Path, settings: Settings, checkpoint_path: Path | None = None) -> dict:
+def run_yaml_queue(
+    runs_file: Path, settings: Settings, checkpoint_path: Path | None = None, force: bool = False
+) -> dict:
     config = load_runs_config(runs_file)
-    return run_queue(config, settings, checkpoint_path)
+    return run_queue(config, settings, checkpoint_path, force=force)

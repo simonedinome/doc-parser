@@ -70,3 +70,8 @@ class Repository(ABC):
     @abstractmethod
     def get_file(self, ref: str) -> bytes:
         """Legge un file dal riferimento ritornato dai metodi save_*."""
+
+    @abstractmethod
+    def get_output_file(self, run_id: str, filename: str) -> bytes | None:
+        """Legge un file di output della run salvato con save_output_file
+        (stesso nome); None se non esiste."""

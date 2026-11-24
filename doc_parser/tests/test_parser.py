@@ -129,3 +129,29 @@ def test_parse_doc_profile_uses_flat_steps_branch() -> None:
 def test_normalize_to_procedures_is_idempotent() -> None:
     already = {"procedures": [{"id": "proc_001", "title": "T", "steps": []}]}
     assert normalize_to_procedures(already) == already
+
+
+def test_parse_video_normalizes_source_slides_to_int_list() -> None:
+    import json
+
+    from doc_parser.pipeline.parser import parse_response
+
+    raw = json.dumps(
+        {
+            "title": "T", "summary": "S", "prerequisites": [], "glossary": [], "notes": [],
+            "procedures": [
+                {
+                    "id": "proc_001", "title": "P1",
+                    "steps": [
+                        {"number": 1, "title": "S1", "description": "D", "source_slides": [3, "Slide 5", "5", 0, None, 2.0, True]},
+                        {"number": 2, "title": "S2", "description": "D", "source_slides": "slide 7"},
+                        {"number": 3, "title": "S3", "description": "D"},
+                    ],
+                }
+            ],
+        }
+    )
+    steps = parse_response(raw, "video")["procedures"][0]["steps"]
+    assert steps[0]["source_slides"] == [3, 5, 2]
+    assert steps[1]["source_slides"] == [7]
+    assert "source_slides" not in steps[2]

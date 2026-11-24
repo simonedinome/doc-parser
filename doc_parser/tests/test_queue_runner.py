@@ -6,6 +6,7 @@ import pytest
 
 from doc_parser.cli.config import GlobalSettings, InputSource, RunConfig, RunsConfig
 from doc_parser.cli.queue_runner import run_queue
+from doc_parser.core.models import RunStatus
 from doc_parser.providers.base import BaseProvider
 from doc_parser.settings import Settings
 from doc_parser.storage.sqlite_repo import SqliteRepository
@@ -156,3 +157,76 @@ def test_run_queue_multiple_runs_in_parallel(monkeypatch, tmp_path, settings) ->
     checkpoint = run_queue(config, settings, checkpoint_path=tmp_path / "checkpoint.json")
 
     assert set(checkpoint["completed_runs"]) == {"run-a", "run-b"}
+
+
+class _NoopWorker:
+    def process_run(self, run) -> None:
+        pass
+
+
+def test_process_run_config_writes_manifest_with_metadata(tmp_path, settings) -> None:
+    from doc_parser.cli.queue_runner import _process_run_config
+
+    webinar = _video_file(tmp_path, "webinar.mp4")
+    pillola = _video_file(tmp_path, "pillola.mp4")
+    slides = tmp_path / "slide.pdf"
+    slides.write_bytes(b"%PDF-1.4 finto")
+    run_config = RunConfig(
+        name="serie",
+        inputs=[
+            InputSource(source="file", path=str(webinar), kind="webinar", recorded_at="2026-06-03"),
+            InputSource(source="file", path=str(pillola), kind="pillola"),
+            InputSource(source="file", path=str(slides)),
+        ],
+    )
+    repo = SqliteRepository(data_dir=settings.data_dir)
+
+    run = _process_run_config(
+        run_config, GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL), repo, _NoopWorker(), settings
+    )
+
+    assert run.input_type == "video"
+    manifest = json.loads(repo.get_file(run.input_manifest_ref))
+    assert [(e["input_id"], e["role"], e.get("kind"), e.get("recorded_at")) for e in manifest] == [
+        ("v1", "video", "webinar", "2026-06-03"),
+        ("v2", "video", "pillola", None),
+        ("pdf", "slides", None, None),
+    ]
+    assert repo.get_file(manifest[2]["path_ref"]) == b"%PDF-1.4 finto"
+
+
+def test_process_run_config_rejects_pdf_for_screencast(tmp_path, settings) -> None:
+    from doc_parser.cli.queue_runner import _process_run_config
+    from doc_parser.core.errors import GuardrailRejection
+
+    video = _video_file(tmp_path)
+    slides = tmp_path / "slide.pdf"
+    slides.write_bytes(b"%PDF-1.4")
+    run_config = RunConfig(name="r", inputs=[InputSource(source="file", path=str(video)), InputSource(source="file", path=str(slides))])
+    repo = SqliteRepository(data_dir=settings.data_dir)
+
+    with pytest.raises(GuardrailRejection, match="non è un video"):
+        _process_run_config(run_config, GlobalSettings(content_type="screencast"), repo, _NoopWorker(), settings)
+
+
+def test_run_queue_force_redoes_completed_and_duplicate_run_in_new_folder(monkeypatch, tmp_path, settings) -> None:
+    checkpoint_path = tmp_path / "checkpoint.json"
+    video = _video_file(tmp_path)
+    config = RunsConfig(
+        settings=GlobalSettings(content_type="video", model_id=GEMINI_LITE_MODEL),
+        runs=[RunConfig(name="run1", inputs=[InputSource(source="file", path=str(video))])],
+    )
+    provider = ScriptedProvider([(_video_response(), 100, 10), (_video_response(), 100, 10)])
+    _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: provider})
+
+    run_queue(config, settings, checkpoint_path=checkpoint_path)
+    skipped = run_queue(config, settings, checkpoint_path=checkpoint_path)
+    forced = run_queue(config, settings, checkpoint_path=checkpoint_path, force=True)
+
+    assert len(provider.calls) == 2  # la seconda chiamata senza --force è saltata dal checkpoint
+    assert skipped["completed_runs"] == forced["completed_runs"] == ["run1"]
+    runs = sorted(SqliteRepository(data_dir=settings.data_dir).list_runs(), key=lambda r: r.created_at)
+    assert [r.status for r in runs] == [RunStatus.DONE, RunStatus.DONE]  # nessun DUPLICATE
+    assert runs[0].output_dir_ref != runs[1].output_dir_ref
+    assert all(Path(r.output_dir_ref).exists() for r in runs)
+    assert runs[1].input_hash == runs[0].input_hash

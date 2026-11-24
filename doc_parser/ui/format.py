@@ -56,6 +56,9 @@ def friendly_row(run: RunRecord) -> dict:
         "Costo (EUR)": f"{run.cost_eur:.4f}" if run.cost_eur is not None else "",
         "Costo step1 (EUR)": f"{run.step1_cost_eur:.4f}" if run.step1_cost_eur is not None else "",
         "Costo step2 (EUR)": f"{run.step2_cost_eur:.4f}" if run.step2_cost_eur is not None else "",
+        "Costo consolidamento (EUR)": (
+            f"{run.consolidation_cost_eur:.4f}" if run.consolidation_cost_eur is not None else ""
+        ),
         "Creata": fmt_dt(run.created_at),
         "Completata": fmt_dt(run.completed_at),
     }

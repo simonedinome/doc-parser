@@ -101,6 +101,32 @@ h3 {
     margin-top: 0.75rem;
     border: 1px solid #dadce0;
 }
+.step-images {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+}
+.step-images figure,
+.concept-image {
+    margin: 0;
+}
+.concept-image img {
+    max-width: 100%;
+    border-radius: 6px;
+    margin-top: 0.75rem;
+    border: 1px solid #dadce0;
+}
+figcaption {
+    font-size: 0.85rem;
+    color: #5f6368;
+    margin-top: 0.25rem;
+}
+@media (max-width: 700px) {
+    .step-images {
+        grid-template-columns: 1fr;
+    }
+}
 .step .notes {
     background: #fff8e1;
     border-left: 3px solid #f9a825;
@@ -148,15 +174,45 @@ h3 {
 """
 
 
-def _render_step_folder(step: dict, proc_id: str, screenshot_map: dict[tuple[str, int], Path | None]) -> str:
+def _image_src(path: Path | None, standalone: bool) -> str | None:
+    """``src`` di un'immagine: percorso relativo ``screenshots/`` per l'HTML
+    con cartella, base64 incorporato per lo standalone."""
+    if path is None:
+        return None
+    if not standalone:
+        return f"screenshots/{path.name}"
+    if not path.exists():
+        return None
+    return f"data:image/png;base64,{base64.b64encode(path.read_bytes()).decode()}"
+
+
+def _slide_caption(item: dict, s: dict[str, str]) -> str:
+    slides = item.get("source_slides") or []
+    return s["html_slide_caption"].format(n=slides[0]) if slides else ""
+
+
+def _render_step(
+    step: dict,
+    proc_id: str,
+    screenshot_map: dict[tuple[str, int], Path | None],
+    slide_map: dict[tuple[str, int], Path],
+    standalone: bool,
+    s: dict[str, str],
+) -> str:
     num = step["number"]
     title = step.get("title", "")
     desc = step.get("description", "")
     note = step.get("notes", "")
+    main_src = _image_src(screenshot_map.get((proc_id, num)), standalone)
+    slide_src = _image_src(slide_map.get((proc_id, num)), standalone)
     img_html = ""
-    sc = screenshot_map.get((proc_id, num))
-    if sc is not None:
-        img_html = f'<img src="screenshots/{sc.name}" alt="Step {num}">'
+    if main_src and slide_src:
+        img_html = f"""<div class="step-images">
+    <figure><img src="{main_src}" alt="Step {num}"></figure>
+    <figure><img src="{slide_src}" alt="{_slide_caption(step, s)}"><figcaption>{_slide_caption(step, s)}</figcaption></figure>
+  </div>"""
+    elif main_src or slide_src:
+        img_html = f'<img src="{main_src or slide_src}" alt="Step {num}">'
     note_html = f'<div class="notes">{note}</div>' if note else ""
     return f"""
 <div class="step">
@@ -170,45 +226,20 @@ def _render_step_folder(step: dict, proc_id: str, screenshot_map: dict[tuple[str
 </div>"""
 
 
-def _render_step_standalone(step: dict, proc_id: str, screenshot_map: dict[tuple[str, int], Path | None]) -> str:
-    num = step["number"]
-    title = step.get("title", "")
-    desc = step.get("description", "")
-    note = step.get("notes", "")
-    img_html = ""
-    sc = screenshot_map.get((proc_id, num))
-    if sc is not None and sc.exists():
-        b64 = base64.b64encode(sc.read_bytes()).decode()
-        img_html = f'<img src="data:image/png;base64,{b64}" alt="Step {num}">'
-    note_html = f'<div class="notes">{note}</div>' if note else ""
-    return f"""
-<div class="step">
-  <div class="step-header">
-    <div class="step-number">{num}</div>
-    <h3>{title}</h3>
-  </div>
-  <p>{desc}</p>
-  {img_html}
-  {note_html}
-</div>"""
-
-
-def _render_steps_folder(steps: list[dict], proc_id: str, screenshot_map: dict[tuple[str, int], Path | None]) -> str:
-    return "\n".join(_render_step_folder(s, proc_id, screenshot_map) for s in steps)
-
-
-def _render_steps_standalone(steps: list[dict], proc_id: str, screenshot_map: dict[tuple[str, int], Path | None]) -> str:
-    return "\n".join(_render_step_standalone(s, proc_id, screenshot_map) for s in steps)
-
-
-def _render_procedures_folder(
-    procedures: list[dict], screenshot_map: dict[tuple[str, int], Path | None]
+def _render_procedures(
+    procedures: list[dict],
+    screenshot_map: dict[tuple[str, int], Path | None],
+    slide_map: dict[tuple[str, int], Path],
+    standalone: bool,
+    s: dict[str, str],
 ) -> str:
     parts: list[str] = []
     for proc in procedures:
         proc_id = proc.get("id", "proc_001")
         proc_title = proc.get("title", "")
-        steps_html = _render_steps_folder(proc.get("steps", []), proc_id, screenshot_map)
+        steps_html = "\n".join(
+            _render_step(step, proc_id, screenshot_map, slide_map, standalone, s) for step in proc.get("steps", [])
+        )
         parts.append(f"""
 <div class="procedure-section" id="{proc_id}">
   <h2>{proc_title}</h2>
@@ -217,38 +248,28 @@ def _render_procedures_folder(
     return "\n".join(parts)
 
 
-def _render_procedures_standalone(
-    procedures: list[dict], screenshot_map: dict[tuple[str, int], Path | None]
+def _render_concepts(
+    concepts: list[dict], concept_image_map: dict[str, Path], standalone: bool, s: dict[str, str]
 ) -> str:
-    parts: list[str] = []
-    for proc in procedures:
-        proc_id = proc.get("id", "proc_001")
-        proc_title = proc.get("title", "")
-        steps_html = _render_steps_standalone(proc.get("steps", []), proc_id, screenshot_map)
-        parts.append(f"""
-<div class="procedure-section" id="{proc_id}">
-  <h2>{proc_title}</h2>
-  {steps_html}
-</div>""")
-    return "\n".join(parts)
-
-
-def _render_concepts_folder(concepts: list[dict]) -> str:
     parts: list[str] = []
     for con in concepts:
         con_id = con.get("id", "con_001")
         con_title = con.get("title", "")
         con_content = con.get("content", "")
+        src = _image_src(concept_image_map.get(con_id), standalone)
+        caption = _slide_caption(con, s)
+        img_html = (
+            f'<figure class="concept-image"><img src="{src}" alt="{caption}"><figcaption>{caption}</figcaption></figure>'
+            if src
+            else ""
+        )
         parts.append(f"""
 <div class="concept-section" id="{con_id}">
   <h2>{con_title}</h2>
   <p>{con_content}</p>
+  {img_html}
 </div>""")
     return "\n".join(parts)
-
-
-def _render_concepts_standalone(concepts: list[dict]) -> str:
-    return _render_concepts_folder(concepts)
 
 
 def _render_toc(data: dict, s: dict[str, str]) -> str:
@@ -337,18 +358,28 @@ def _render_html(data: dict, procedures_html: str, concepts_html: str, language:
 
 
 def build_html_folder(
-    data: dict, screenshot_map: dict[tuple[str, int], Path | None], language: str = "it"
+    data: dict,
+    screenshot_map: dict[tuple[str, int], Path | None],
+    language: str = "it",
+    slide_map: dict[tuple[str, int], Path] | None = None,
+    concept_image_map: dict[str, Path] | None = None,
 ) -> str:
     """HTML con percorsi immagine relativi ``screenshots/``."""
-    concepts_html = _render_concepts_folder(data.get("concepts", []))
-    procedures_html = _render_procedures_folder(data.get("procedures", []), screenshot_map)
+    s = get_strings(language)
+    concepts_html = _render_concepts(data.get("concepts", []), concept_image_map or {}, False, s)
+    procedures_html = _render_procedures(data.get("procedures", []), screenshot_map, slide_map or {}, False, s)
     return _render_html(data, procedures_html, concepts_html, language)
 
 
 def build_html_standalone(
-    data: dict, screenshot_map: dict[tuple[str, int], Path | None], language: str = "it"
+    data: dict,
+    screenshot_map: dict[tuple[str, int], Path | None],
+    language: str = "it",
+    slide_map: dict[tuple[str, int], Path] | None = None,
+    concept_image_map: dict[str, Path] | None = None,
 ) -> str:
     """Un unico file HTML autonomo con immagini embedded in base64."""
-    concepts_html = _render_concepts_standalone(data.get("concepts", []))
-    procedures_html = _render_procedures_standalone(data.get("procedures", []), screenshot_map)
+    s = get_strings(language)
+    concepts_html = _render_concepts(data.get("concepts", []), concept_image_map or {}, True, s)
+    procedures_html = _render_procedures(data.get("procedures", []), screenshot_map, slide_map or {}, True, s)
     return _render_html(data, procedures_html, concepts_html, language)

@@ -599,3 +599,53 @@ def test_dedup_does_not_trigger_for_different_output_mode(monkeypatch, repo, set
 
     assert second.status == RunStatus.DONE
     assert len(provider.calls) == 2
+
+
+def test_step2_retry_resends_raw_json_with_feedback(monkeypatch, repo, settings) -> None:
+    run = _video_run(repo, OPENROUTER_MODEL)
+    steps = [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1", "notes": "", "embedding_keywords": []}]
+    step1 = ScriptedProvider([(_flat_steps_response(steps), 100, 10)])
+    bad = _flat_steps_response([{"number": 99, "timestamp": "99:99", "title": "X", "description": "d"}])
+    good = {
+        "title": "Rifinito", "summary": "S", "prerequisites": [], "glossary": [], "notes": [],
+        "procedures": [{"id": "proc_001", "title": "Titolo", "steps": [{"number": 1, "timestamp": "00:10", "title": "S1", "description": "d1 meglio"}]}],
+    }
+    step2 = ScriptedProvider([(bad, 10, 10), (json.dumps(good), 10, 10)])
+    _patch_providers(monkeypatch, {STEP1_MODEL: step1, OPENROUTER_MODEL: step2})
+
+    process_run(run, repo, settings)
+
+    updated = repo.get_run(run.run_id)
+    assert updated.status == RunStatus.DONE
+    assert updated.retry_count == 1
+    retry_prompt = step2.calls[1][1]
+    assert retry_prompt.startswith("Ecco il JSON grezzo da rifinire:")
+    assert '"timestamp": "00:10"' in retry_prompt  # il JSON grezzo viaggia di nuovo
+    assert "ha violato il vincolo" in retry_prompt
+
+
+def test_pptx_requested_for_document_run_is_skipped_with_warning(monkeypatch, repo, settings) -> None:
+    run = _document_run(repo, "manuale.pdf", _sample_pdf_bytes(), "pdf", OPENROUTER_MODEL, output_artifacts="procedura,pptx")
+    steps = [{"number": 1, "timestamp": "Pagina 1", "title": "S1", "description": "d", "notes": "", "embedding_keywords": []}]
+    _patch_providers(monkeypatch, {OPENROUTER_MODEL: ScriptedProvider([(_flat_steps_response(steps), 10, 10)])})
+
+    process_run(run, repo, settings)
+
+    zf = zipfile.ZipFile(io.BytesIO(repo.get_file(repo.get_run(run.run_id).zip_ref)))
+    assert "presentazione_tutorial.pptx" not in zf.namelist()
+    assert "Presentazione PPT non generata" in zf.read("log.txt").decode("utf-8")
+
+
+def test_single_video_run_produces_pptx_when_requested(monkeypatch, repo, settings) -> None:
+    run = _video_run(repo, GEMINI_LITE_MODEL, content_type="video", output_artifacts="pptx")
+    response = json.dumps(
+        {"title": "T", "summary": "S", "prerequisites": [], "glossary": [], "notes": [],
+         "procedures": [{"id": "proc_001", "title": "P", "steps": [{"number": 1, "title": "S1", "description": "d", "source_timestamps": ["00:10"]}]}]}
+    )
+    _patch_providers(monkeypatch, {GEMINI_LITE_MODEL: ScriptedProvider([(response, 10, 10)])})
+
+    with patch("doc_parser.pipeline.screenshots.subprocess.run", side_effect=FileNotFoundError()):
+        process_run(run, repo, settings)
+
+    names = zipfile.ZipFile(io.BytesIO(repo.get_file(repo.get_run(run.run_id).zip_ref))).namelist()
+    assert "presentazione_tutorial.pptx" in names

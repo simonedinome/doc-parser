@@ -17,6 +17,10 @@ class Logger:
         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self._lines.append(f"[{ts}] [{level}] {message}")
 
+    def add_block(self, lines: list[str]) -> None:
+        """Aggiunge righe così come sono, senza timestamp né livello (report)."""
+        self._lines.extend(lines)
+
     @property
     def lines(self) -> list[str]:
         return list(self._lines)

@@ -3,6 +3,7 @@ import pytest
 from doc_parser.core.errors import GuardrailRejection
 from doc_parser.ingestion.guardrails import (
     check_size,
+    check_slides_pdf,
     classify_extension,
     inspect_pdf,
     resolve_input_type,
@@ -128,3 +129,42 @@ def test_resolve_input_type_doc_mixing_images_and_documents_rejected() -> None:
 def test_resolve_input_type_doc_unsupported_extension_raises() -> None:
     with pytest.raises(GuardrailRejection):
         resolve_input_type(False, ["a.zip"])
+
+
+def test_resolve_input_type_video_accepts_one_slides_pdf_when_allowed() -> None:
+    assert resolve_input_type(True, ["a.mp4", "b.mov", "slide.pdf"], allow_slides_pdf=True) == "video"
+
+
+def test_resolve_input_type_video_rejects_two_pdfs() -> None:
+    with pytest.raises(GuardrailRejection, match="massimo un PDF di slide"):
+        resolve_input_type(True, ["a.mp4", "s1.pdf", "s2.pdf"], allow_slides_pdf=True)
+
+
+def test_resolve_input_type_video_rejects_pdf_only() -> None:
+    with pytest.raises(GuardrailRejection, match="almeno un video"):
+        resolve_input_type(True, ["slide.pdf"], allow_slides_pdf=True)
+
+
+def test_resolve_input_type_video_rejects_pdf_when_not_allowed() -> None:
+    with pytest.raises(GuardrailRejection, match="non è un video"):
+        resolve_input_type(True, ["a.mp4", "slide.pdf"], allow_slides_pdf=False)
+
+
+def test_resolve_input_type_video_rejects_other_documents_even_with_slides_allowed() -> None:
+    with pytest.raises(GuardrailRejection, match="al massimo un PDF di slide"):
+        resolve_input_type(True, ["a.mp4", "note.docx"], allow_slides_pdf=True)
+
+
+def test_check_slides_pdf_valid_returns_pages() -> None:
+    assert check_slides_pdf(_sample_pdf(pages=4), max_pages=10) == 4
+
+
+def test_check_slides_pdf_over_50_mb_rejected() -> None:
+    oversized = b"%PDF-1.4\n" + b"0" * (51 * 1024 * 1024)
+    with pytest.raises(GuardrailRejection, match="oltre il limite di 50 MB"):
+        check_slides_pdf(oversized, max_pages=300)
+
+
+def test_check_slides_pdf_encrypted_rejected() -> None:
+    with pytest.raises(GuardrailRejection, match="cifrato"):
+        check_slides_pdf(_encrypted_pdf(), max_pages=10)

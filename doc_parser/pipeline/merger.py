@@ -81,4 +81,15 @@ def merge_run_results(results: list[tuple[dict, str]], run_name: str) -> dict:
     }
     if all_concepts:
         merged["concepts"] = all_concepts
+
+    if any("qa" in data for data, _ in results):
+        seen_questions: set[str] = set()
+        qa: list[dict] = []
+        for data, _ in results:
+            for item in data.get("qa", []):
+                key = item.get("question", "").strip().lower()
+                if key not in seen_questions:
+                    seen_questions.add(key)
+                    qa.append(item)
+        merged["qa"] = qa
     return merged

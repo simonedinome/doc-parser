@@ -47,6 +47,10 @@ avvia l'elaborazione.
    - Procedura (`procedura.txt`)
    - Glossario (`glossario.txt`)
    - Chunk RAG (`rag_chunks.jsonl`)
+   - Presentazione tutorial (`presentazione_tutorial.pptx`), solo per i video,
+     spenta di default
+   - Knowledge base per Agentforce (`<nome-run>_<data>_<ora>.txt`), spenta
+     di default: vedi la sezione *Knowledge base* qui sotto
 
    Deve essere selezionato almeno un file di output.
 7. Premi **Avvia elaborazione**. L'elaborazione parte in background: puoi
@@ -55,6 +59,66 @@ avvia l'elaborazione.
 8. Quando la run è completata compare il pulsante **Scarica**. Se il
    documento risulta un duplicato di una richiesta precedente, l'output
    viene riutilizzato senza rielaborazione (nessun costo aggiuntivo).
+            """
+        )
+
+    with st.expander("🎬 Video — serie di formazione, slide e presentazione"):
+        st.markdown(
+            """
+Con il tipo di contenuto **Video** e la modalità **Processa di gruppo** puoi
+caricare più video della stessa formazione e, facoltativamente, **un solo PDF
+con le slide**. Ne esce un unico export: le procedure ripetute nei vari video
+(o nei ripassi dello stesso video) vengono unite una volta sola, e le slide che
+i video non trattano diventano procedure o concetti.
+
+1. **Etichette** — per ogni video scegli *Webinar* (predefinito) o *Pillola*
+   e, se la conosci, la **data di registrazione**.
+2. **PDF di slide** — al massimo uno per run, non cifrato, entro 50 MB e
+   entro il limite di pagine. Serve sempre almeno un video. In *Processa
+   singolarmente* il PDF non è ammesso.
+3. **Priorità** — se le fonti si contraddicono vince il **webinar**, poi le
+   **slide**, poi le **pillole**. A parità di tipo vince la registrazione più
+   recente; i video con data vengono prima di quelli senza; a parità vince
+   l'ultimo caricato (prima i file, poi gli URL, nell'ordine inserito).
+4. **Log delle discordanze** — il `log.txt` nello ZIP elenca le fonti, ogni
+   discordanza risolta (fonte tenuta e fonti scartate con file, tipo, data,
+   timestamp o numero di slide, motivo), i contenuti scartati, le slide non
+   incluse e gli avvisi. Una riga che inizia con **ATTENZIONE** indica che è
+   stata scartata una fonte più recente: conviene verificarla aprendo il
+   video al timestamp indicato.
+5. **Presentazione tutorial** — la casella *Presentazione tutorial* produce
+   un PowerPoint 16:9 da proiettare: una slide per concetto e per step, con
+   l'immagine dello step (fotogramma o slide) o il testo. Testo completo e
+   fonte di ogni step sono nelle note del relatore.
+6. **Costi** — una serie costa lo step 1 di ogni video, più il
+   consolidamento e la riscrittura con il modello scelto: il dettaglio è
+   nelle colonne di costo di «Le mie richieste».
+            """
+        )
+
+    with st.expander("🧠 Knowledge base — il TXT per l'agente Agentforce"):
+        st.markdown(
+            """
+La casella **Knowledge base per Agentforce** produce un unico file di testo
+pronto da caricare nella **Data Library** di Agentforce. Contiene tutto ciò
+che serve all'agente: concetti e spiegazioni, procedure passo passo, domande
+e risposte complete, glossario e note.
+
+1. **Quando sceglierla** — per webinar, serie di video con slide, PDF e
+   documenti. Con la casella spuntata il modello estrae anche le spiegazioni
+   teoriche e le Q&A per intero, quindi la run costa un po' di più; senza la
+   casella tutto resta come prima.
+2. **Com'è fatto il file** — sezioni brevi che iniziano con
+   `### Tipo: titolo | Argomento: …`. Ognuna si capisce anche letta da sola,
+   perché la Data Library spezza il file in pezzi e all'agente arriva solo il
+   pezzo pertinente.
+3. **Nome del file** — nome della run, data e ora di avvio, ad esempio
+   `formazione-gestionale_2026-11-24_0854.txt`.
+4. **Caricarlo** — in Salesforce apri *Setup → Agentforce Data Library*,
+   scegli la libreria dell'agente e carica il TXT. Quando rifai la run,
+   elimina dalla libreria la versione precedente.
+5. **Rielabora** — si può chiedere il KB rielaborando solo una run che lo
+   aveva già: altrimenti va rifatta la run completa con la casella spuntata.
             """
         )
 
@@ -75,7 +139,9 @@ Elenca tutte le run avviate dall'utente collegato.
 - **Rielabora** — per le run video completate è possibile rigenerare solo lo
   step 2 (la riscrittura finale) con un modello diverso, riusando il JSON
   grezzo e gli screenshot già estratti in precedenza: nessun nuovo costo di
-  estrazione, solo il costo della riscrittura con il nuovo modello.
+  estrazione, solo il costo della riscrittura con il nuovo modello. Per le
+  serie di video consolidate restano anche immagini, fonti e log delle
+  discordanze.
             """
         )
 

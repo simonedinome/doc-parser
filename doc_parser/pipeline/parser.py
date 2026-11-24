@@ -34,6 +34,28 @@ _REQUIRED_KEYS_MANUALE: list[str] = [
 ]
 
 
+def normalize_slide_numbers(value) -> list[int]:
+    """Converte un riferimento a slide (lista o valore singolo) in una lista di
+    numeri di pagina interi >= 1, senza duplicati: accetta interi, float
+    interi e stringhe tipo "3" o "Slide 3"; scarta tutto il resto."""
+    items = value if isinstance(value, list) else [value]
+    numbers: list[int] = []
+    for item in items:
+        number: int | None = None
+        if isinstance(item, bool):
+            number = None
+        elif isinstance(item, int):
+            number = item
+        elif isinstance(item, float) and item.is_integer():
+            number = int(item)
+        elif isinstance(item, str):
+            match = re.search(r"\d+", item)
+            number = int(match.group()) if match else None
+        if number is not None and number >= 1 and number not in numbers:
+            numbers.append(number)
+    return numbers
+
+
 def load_json_response(raw: str) -> dict:
     """Rimuove i code fence markdown e carica il JSON, senza validare lo schema
     per content_type: usato per risposte già normalizzate a procedures[] (step 2),
@@ -42,7 +64,7 @@ def load_json_response(raw: str) -> dict:
     cleaned = re.sub(r"^```(?:json)?\s*\n?", "", raw.strip())
     cleaned = re.sub(r"\n?```\s*$", "", cleaned)
     try:
-        return json.loads(cleaned)
+        return json.loads(cleaned, strict=False)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON non valido nella risposta del modello: {exc}") from exc
 
@@ -68,6 +90,31 @@ def normalize_to_procedures(data: dict) -> dict:
     return data
 
 
+def normalize_kb_fields(data: dict) -> dict:
+    """Normalizza ``concepts`` e ``qa`` (chiesti dall'addendum KB) quando presenti.
+
+    Non aggiunge chiavi assenti, così il JSON delle run senza KB resta identico.
+    Le Q&A senza domanda o senza risposta vengono scartate.
+    """
+    if "concepts" in data:
+        concepts = data["concepts"] if isinstance(data["concepts"], list) else []
+        concepts = [con for con in concepts if isinstance(con, dict)]
+        for con in concepts:
+            if "embedding_keywords" in con and not isinstance(con["embedding_keywords"], list):
+                con["embedding_keywords"] = []
+        data["concepts"] = concepts
+    if "qa" in data:
+        items = data["qa"] if isinstance(data["qa"], list) else []
+        data["qa"] = [
+            {"question": str(item["question"]).strip(), "answer": str(item["answer"]).strip()}
+            for item in items
+            if isinstance(item, dict)
+            and str(item.get("question") or "").strip()
+            and str(item.get("answer") or "").strip()
+        ]
+    return data
+
+
 def parse_response(raw: str, content_type: str = "documento") -> dict:
     """Converte l'output grezzo del modello in un dict di documentazione validato.
 
@@ -81,7 +128,7 @@ def parse_response(raw: str, content_type: str = "documento") -> dict:
     cleaned = re.sub(r"\n?```\s*$", "", cleaned)
 
     try:
-        data: dict = json.loads(cleaned)
+        data: dict = json.loads(cleaned, strict=False)
     except json.JSONDecodeError as exc:
         raise ValueError(f"JSON non valido nella risposta del modello: {exc}") from exc
 
@@ -138,7 +185,7 @@ def parse_response(raw: str, content_type: str = "documento") -> dict:
                     step["source_timestamps"] = []
                 if "source_pages" in step and not isinstance(step["source_pages"], list):
                     step["source_pages"] = []
-        return data
+        return normalize_kb_fields(data)
 
     else:
         # screencast / documento: valida il formato steps[] originale, poi normalizza
@@ -161,5 +208,7 @@ def parse_response(raw: str, content_type: str = "documento") -> dict:
                 step["source_timestamps"] = []
             if "source_pages" in step and not isinstance(step["source_pages"], list):
                 step["source_pages"] = []
+            if "source_slides" in step:
+                step["source_slides"] = normalize_slide_numbers(step["source_slides"])
 
-    return data
+    return normalize_kb_fields(data)
